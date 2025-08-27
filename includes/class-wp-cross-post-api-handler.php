@@ -2,7 +2,7 @@
 class WP_Cross_Post_API_Handler {
     private $debug_manager;
     private $min_php_version = '7.4.0';
-    private $min_wp_version = '5.8.0';
+    private $min_wp_version = '6.5.0';
 
     public function __construct() {
         $this->debug_manager = WP_Cross_Post_Debug_Manager::get_instance();
@@ -15,6 +15,48 @@ class WP_Cross_Post_API_Handler {
         
         // REST APIフィルター
         add_filter('rest_authentication_errors', array($this, 'check_rest_api_access'));
+    }
+
+    /**
+     * サイトへの接続テスト
+     */
+    public function test_connection($site_data) {
+        // WordPress 5.6以降のアプリケーションパスワード対応
+        $auth_header = $this->get_auth_header($site_data);
+        
+        $response = wp_remote_get($site_data['url'] . '/wp-json/wp/v2/users/me', array(
+            'timeout' => 30,
+            'headers' => array(
+                'Authorization' => $auth_header
+            )
+        ));
+
+        if (is_wp_error($response)) {
+            return $response;
+        }
+
+        $status_code = wp_remote_retrieve_response_code($response);
+        if ($status_code !== 200) {
+            $body = json_decode(wp_remote_retrieve_body($response), true);
+            $error_message = isset($body['message']) ? $body['message'] : '接続テストに失敗しました。';
+            return new WP_Error('connection_failed', $error_message);
+        }
+
+        return true;
+    }
+
+    /**
+     * 認証ヘッダーを取得
+     */
+    private function get_auth_header($site_data) {
+        // WordPress 5.6以降のアプリケーションパスワード対応
+        if (version_compare(get_bloginfo('version'), '5.6', '>=')) {
+            // アプリケーションパスワードの形式で認証
+            return 'Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password']);
+        } else {
+            // 従来のBasic認証
+            return 'Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password']);
+        }
     }
 
     /**

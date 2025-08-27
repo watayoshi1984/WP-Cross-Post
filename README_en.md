@@ -15,7 +15,7 @@ A plugin for synchronizing articles between WordPress sites. Automatic synchroni
 ## Requirements
 
 - PHP 7.4 or higher
-- WordPress 5.8 or higher
+- WordPress 6.5 or higher
 - REST API enabled
 - Application password function enabled
 
@@ -49,6 +49,17 @@ A plugin for synchronizing articles between WordPress sites. Automatic synchroni
 3. Confirm synchronization status
 
 ## Changelog
+
+### 1.1.0 - 2025-08-27
+- 🔄 WordPress 6.5 Compatibility
+  - Adapted to changes in the application password feature
+  - Compatible with the latest REST API specifications
+- 🛡️ Security Enhancement
+  - Improved authentication process
+  - Strengthened SSL connection
+- 🐛 Bug Fixes
+  - Fixed operational issues after WordPress updates
+  - Improved Japanese domain processing
 
 ### 1.0.9 - 2024-02-XX
 - 🖼️ Improved featured image synchronization processing

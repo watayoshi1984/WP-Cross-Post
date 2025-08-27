@@ -41,6 +41,42 @@ class WP_Cross_Post_Site_Handler {
         return $site_data['id'];
     }
 
+    /**
+     * サイト名を取得
+     */
+    private function get_site_name($site_data) {
+        // WordPress 6.5以降のアプリケーションパスワード対応
+        $auth_header = $this->get_auth_header($site_data);
+        
+        $response = wp_remote_get($site_data['url'] . '/wp-json', array(
+            'timeout' => 30,
+            'headers' => array(
+                'Authorization' => $auth_header
+            )
+        ));
+
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', 'サイト名の取得に失敗しました: ' . $response->get_error_message());
+        }
+
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        return isset($data['name']) ? $data['name'] : parse_url($site_data['url'], PHP_URL_HOST);
+    }
+
+    /**
+     * 認証ヘッダーを取得
+     */
+    private function get_auth_header($site_data) {
+        // WordPress 5.6以降のアプリケーションパスワード対応
+        if (version_compare(get_bloginfo('version'), '5.6', '>=')) {
+            // アプリケーションパスワードの形式で認証
+            return 'Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password']);
+        } else {
+            // 従来のBasic認証
+            return 'Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password']);
+        }
+    }
+
     public function remove_site($site_id) {
         $sites = get_option('wp_cross_post_sites', array());
         foreach ($sites as $key => $site) {
@@ -66,25 +102,6 @@ class WP_Cross_Post_Site_Handler {
             }
         }
         return true;
-    }
-
-    /**
-     * サイト名を取得
-     */
-    private function get_site_name($site_data) {
-        $response = wp_remote_get($site_data['url'] . '/wp-json', array(
-            'timeout' => 30,
-            'headers' => array(
-                'Authorization' => 'Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password'])
-            )
-        ));
-
-        if (is_wp_error($response)) {
-            return new WP_Error('api_error', 'サイト名の取得に失敗しました: ' . $response->get_error_message());
-        }
-
-        $data = json_decode(wp_remote_retrieve_body($response), true);
-        return isset($data['name']) ? $data['name'] : parse_url($site_data['url'], PHP_URL_HOST);
     }
 
     /**

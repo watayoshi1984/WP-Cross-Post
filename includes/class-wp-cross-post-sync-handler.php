@@ -617,163 +617,52 @@ class WP_Cross_Post_Sync_Handler {
     /**
      * アイキャッチ画像の同期処理を改善
      */
-    private function sync_featured_image($site_data, $image_data, $post_id) {
-        $this->debug_manager->log('アイキャッチ画像の同期を開始: ' . json_encode($image_data), 'info');
-
-        // 1. ファイルパスをチェック
-        if (empty($image_data['file_path']) || !file_exists($image_data['file_path'])) {
-            $this->debug_manager->log('ファイルが見つかりません: ' . $image_data['file_path'], 'error');
-            return false;
-        }
-
-        // REST APIが有効かどうかを確認
-        $rest_api_check = $this->check_rest_api_availability($site_data);
-        if (is_wp_error($rest_api_check)) {
-            $this->debug_manager->log('REST APIが利用できません: ' . $rest_api_check->get_error_message(), 'error');
-            return false;
-        }
-
-        // 2. ファイル名を準備
-        $file_name = basename($image_data['file_path']);
-        $file_type = wp_check_filetype($file_name);
-        if (empty($file_type['type'])) {
-            $file_type = array('type' => 'image/jpeg');
-        }
-
-        $this->debug_manager->log('アイキャッチ画像ファイル名: ' . $file_name, 'info');
-        $this->debug_manager->log('アイキャッチ画像タイプ: ' . $file_type['type'], 'info');
-
-        // 3. バウンダリを生成
-        $boundary = md5(time());
-
-        // 4. リクエスト本文を構築
-        $body = '';
-        $body .= "--$boundary\r\n";
-        $body .= "Content-Disposition: form-data; name=\"file\"; filename=\"$file_name\"\r\n";
-        $body .= "Content-Type: {$file_type['type']}\r\n\r\n";
-        $body .= file_get_contents($image_data['file_path']) . "\r\n";
-        $body .= "--$boundary--\r\n";
-
-        // 5. cURLリクエストを準備
-        $curl = curl_init();
+    private function sync_featured_image($site_data, $media_data, $post_id) {
+        // WordPress 6.5以降のアプリケーションパスワード対応
+        $auth_header = $this->get_auth_header($site_data);
         
-        // エンドポイントのURLを修正 - 末尾にスラッシュがあることを確認
-        $url = rtrim($site_data['url'], '/') . '/wp-json/wp/v2/media';
-        $this->debug_manager->log('アップロード先URL: ' . $url, 'info');
-
-        // cURLオプションの設定
-        curl_setopt_array($curl, array(
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $body,
-            CURLOPT_HTTPHEADER => array(
-                'Authorization: Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password']),
-                'Content-Type: multipart/form-data; boundary=' . $boundary,
-                'Content-Length: ' . strlen($body)
+        $response = wp_remote_post($site_data['url'] . '/wp-json/wp/v2/media', array(
+            'timeout' => 60,
+            'headers' => array(
+                'Authorization' => $auth_header,
+                'Content-Disposition' => 'attachment; filename="' . basename($media_data['source_url']) . '"'
             ),
-            CURLOPT_TIMEOUT => 60,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false,
-            CURLOPT_VERBOSE => true
+            'body' => file_get_contents($media_data['source_url'])
         ));
 
-        // 6. リクエストを実行
-        $response_body = curl_exec($curl);
-        $response_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        $curl_error = curl_error($curl);
-        $curl_info = curl_getinfo($curl);
-
-        // 詳細なデバッグ情報
-        $this->debug_manager->log('cURL情報: ' . json_encode($curl_info), 'debug');
-        $this->debug_manager->log('レスポンスコード: ' . $response_code, 'info');
-        
-        if ($curl_error) {
-            $this->debug_manager->log('cURLエラー: ' . $curl_error, 'error');
+        if (is_wp_error($response)) {
+            $this->debug_manager->log('アイキャッチ画像の同期に失敗: ' . $response->get_error_message(), 'error');
+            return null;
         }
 
-        // 7. リソースを解放
-        curl_close($curl);
-
-        // 8. レスポンスを確認
-        if ($response_code < 200 || $response_code >= 300) {
-            $this->debug_manager->log('アイキャッチ画像アップロードに失敗 (HTTP ' . $response_code . '): ' . $response_body, 'error');
-            
-            // 代替方法を試みる
-            $alternate_result = $this->sync_featured_image_alternate($site_data, $image_data, $post_id);
-            if ($alternate_result) {
-                return $alternate_result;
-            }
-            
-            return false;
+        $status_code = wp_remote_retrieve_response_code($response);
+        if ($status_code !== 201) {
+            $body = json_decode(wp_remote_retrieve_body($response), true);
+            $error_message = isset($body['message']) ? $body['message'] : '画像のアップロードに失敗しました。';
+            $this->debug_manager->log('アイキャッチ画像の同期に失敗: ' . $error_message, 'error');
+            return null;
         }
 
-        $media_data = json_decode($response_body, true);
-        if (!isset($media_data['id'])) {
-            $this->debug_manager->log('アイキャッチ画像IDの取得に失敗: ' . $response_body, 'error');
-            return false;
-        }
-
-        $this->debug_manager->log('アイキャッチ画像アップロード成功: ' . json_encode($media_data), 'info');
-        return $media_data;
+        $media = json_decode(wp_remote_retrieve_body($response), true);
+        return array(
+            'id' => $media['id'],
+            'source_url' => $media['source_url'],
+            'alt_text' => $media['alt_text']
+        );
     }
 
     /**
-     * 代替方法でアイキャッチ画像を同期
+     * 認証ヘッダーを取得
      */
-    private function sync_featured_image_alternate($site_data, $image_data, $post_id) {
-        $this->debug_manager->log('代替方法でアイキャッチ画像の同期を試みます', 'info');
-        
-        // XMLRPCが有効か確認
-        $xmlrpc_url = rtrim($site_data['url'], '/') . '/xmlrpc.php';
-        $test_response = wp_remote_get($xmlrpc_url);
-        
-        if (is_wp_error($test_response) || wp_remote_retrieve_response_code($test_response) != 200) {
-            $this->debug_manager->log('XMLRPCも利用できません', 'error');
-            return false;
+    private function get_auth_header($site_data) {
+        // WordPress 5.6以降のアプリケーションパスワード対応
+        if (version_compare(get_bloginfo('version'), '5.6', '>=')) {
+            // アプリケーションパスワードの形式で認証
+            return 'Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password']);
+        } else {
+            // 従来のBasic認証
+            return 'Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password']);
         }
-        
-        // XMLRPCリクエストを構築
-        $xmlrpc_request = xmlrpc_encode_request('wp.uploadFile', array(
-            0,  // ブログID
-            $site_data['username'],
-            $site_data['app_password'],
-            array(
-                'name' => basename($image_data['file_path']),
-                'type' => mime_content_type($image_data['file_path']),
-                'bits' => new xmlrpcval(base64_encode(file_get_contents($image_data['file_path'])), 'base64'),
-                'overwrite' => true
-            )
-        ));
-        
-        // XMLRPCリクエストを送信
-        $response = wp_remote_post($xmlrpc_url, array(
-            'headers' => array('Content-Type' => 'text/xml'),
-            'body' => $xmlrpc_request,
-            'timeout' => 60
-        ));
-        
-        if (is_wp_error($response)) {
-            $this->debug_manager->log('XMLRPC経由の画像アップロードに失敗: ' . $response->get_error_message(), 'error');
-            return false;
-        }
-        
-        $response_code = wp_remote_retrieve_response_code($response);
-        if ($response_code != 200) {
-            $this->debug_manager->log('XMLRPC経由の画像アップロードに失敗 (HTTP ' . $response_code . ')', 'error');
-            return false;
-        }
-        
-        $response_body = wp_remote_retrieve_body($response);
-        $xml_response = xmlrpc_decode($response_body);
-        
-        if (is_array($xml_response) && isset($xml_response['id'])) {
-            $this->debug_manager->log('XMLRPC経由でアイキャッチ画像をアップロード成功: ID ' . $xml_response['id'], 'info');
-            return array('id' => $xml_response['id']);
-        }
-        
-        $this->debug_manager->log('XMLRPC経由でのアップロードに失敗: ' . print_r($xml_response, true), 'error');
-        return false;
     }
 
     /**
@@ -948,13 +837,12 @@ class WP_Cross_Post_Sync_Handler {
      * @return array|null サイト情報、見つからない場合はnull
      */
     private function get_site_data($site_id) {
-        $sites = $this->site_handler->get_sites();
+        $sites = get_option('wp_cross_post_sites', array());
         foreach ($sites as $site) {
             if ($site['id'] === $site_id) {
                 return $site;
             }
         }
-        $this->debug_manager->log('サイトが見つかりません: ' . $site_id, 'error');
         return null;
     }
 }

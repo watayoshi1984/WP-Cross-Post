@@ -3,8 +3,8 @@
  * Plugin Name: WP Cross Post
  * Plugin URI: https://yamaoku-seo.com/wp-cross-post
  * Description: WordPressサイト間で記事を同期するプラグイン。カテゴリーとタグの自動同期、マテリアルデザインUI、REST API v2対応。
- * Version: 1.0.9
- * Requires at least: 6.4
+ * Version: 1.1.0
+ * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: watayoshi
  * Author URI: 

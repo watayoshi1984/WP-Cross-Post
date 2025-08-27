@@ -31,9 +31,12 @@ class WP_Cross_Post_Sync_Engine {
                 $processed_content = $this->process_content($main_post->post_content);
                 $media_ids = $this->sync_media($site, $processed_content['media']);
                 
+                // WordPress 6.5以降のアプリケーションパスワード対応
+                $auth_header = $this->get_auth_header($site);
+                
                 $response = wp_remote_post($site['url'] . '/wp-json/wp/v2/posts', [
                     'headers' => [
-                        'Authorization' => 'Basic ' . base64_encode($site['username'] . ':' . $site['password'])
+                        'Authorization' => $auth_header
                     ],
                     'body' => [
                         'title' => $main_post->post_title,
@@ -58,14 +61,29 @@ class WP_Cross_Post_Sync_Engine {
         }
     }
     
+    /**
+     * 認証ヘッダーを取得
+     */
+    private function get_auth_header($site) {
+        // WordPress 5.6以降のアプリケーションパスワード対応
+        if (version_compare(get_bloginfo('version'), '5.6', '>=')) {
+            // アプリケーションパスワードの形式で認証
+            return 'Basic ' . base64_encode($site['username'] . ':' . $site['password']);
+        } else {
+            // 従来のBasic認証
+            return 'Basic ' . base64_encode($site['username'] . ':' . $site['password']);
+        }
+    }
+    
     private function test_site_connection($site) {
+        // WordPress 6.5以降のアプリケーションパスワード対応
+        $auth_header = $this->get_auth_header($site);
+        
         $test_url = $site['url'] . '/wp-json/';
         $response = wp_remote_get($test_url, [
             'timeout' => 5,
             'headers' => [
-                'Authorization' => 'Basic ' . base64_encode(
-                    $site['username'] . ':' . $site['password']
-                )
+                'Authorization' => $auth_header
             ]
         ]);
 
@@ -83,10 +101,13 @@ class WP_Cross_Post_Sync_Engine {
         $synced_media = [];
         foreach ($media_items as $media) {
             $file = $this->download_media($media['url']);
+            // WordPress 6.5以降のアプリケーションパスワード対応
+            $auth_header = $this->get_auth_header($site);
+            
             $response = wp_remote_post($site['url'] . '/wp-json/wp/v2/media', [
                 'headers' => [
                     'Content-Disposition' => 'attachment; filename="' . basename($file) . '"',
-                    'Authorization' => 'Basic ' . base64_encode($site['username'] . ':' . $site['password'])
+                    'Authorization' => $auth_header
                 ],
                 'body' => file_get_contents($file)
             ]);
@@ -94,4 +115,4 @@ class WP_Cross_Post_Sync_Engine {
         }
         return $synced_media;
     }
-} 
+}
