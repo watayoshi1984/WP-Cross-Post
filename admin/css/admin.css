@@ -1,0 +1,125 @@
+/* マテリアルデザインの基本スタイル */
+body {
+    font-family: 'Roboto', sans-serif;
+    line-height: 1.5;
+    color: rgba(0, 0, 0, 0.87);
+    background-color: #f5f5f5;
+}
+
+.wp-cross-post-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px;
+}
+
+.wp-cross-post-card {
+    background-color: #fff;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    padding: 24px;
+    margin-bottom: 24px;
+}
+
+.wp-cross-post-title {
+    font-size: 24px;
+    font-weight: 500;
+    margin-bottom: 16px;
+}
+
+.wp-cross-post-button {
+    display: inline-block;
+    background-color: #2196F3;
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 4px;
+    text-decoration: none;
+    font-weight: 500;
+    text-transform: uppercase;
+    transition: background-color 0.3s;
+    border: none;
+    cursor: pointer;
+}
+
+.wp-cross-post-button:hover {
+    background-color: #1976D2;
+}
+
+/* フォーム要素のスタイル */
+.wp-cross-post-form-group {
+    margin-bottom: 16px;
+}
+
+.wp-cross-post-form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.wp-cross-post-form-group input[type="text"],
+.wp-cross-post-form-group input[type="url"],
+.wp-cross-post-form-group input[type="password"] {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 16px;
+}
+
+/* テーブルのスタイル */
+.wp-cross-post-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.wp-cross-post-table th,
+.wp-cross-post-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.wp-cross-post-table th {
+    font-weight: 500;
+    background-color: #f5f5f5;
+}
+
+/* メタボックスのスタイル */
+#wp-cross-post-meta-box .inside {
+    padding: 0;
+    margin: 0;
+}
+
+.wp-cross-post-meta-box-content {
+    padding: 12px;
+}
+
+.wp-cross-post-checkbox-list {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 8px;
+    margin-bottom: 12px;
+}
+
+.wp-cross-post-checkbox-list label {
+    display: block;
+    margin-bottom: 4px;
+}
+
+/* ローディングインジケーター */
+.wp-cross-post-loading {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid #f3f3f3;
+    border-top: 2px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-left: 10px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
