@@ -41,9 +41,12 @@ class WP_Cross_Post_Debug_Manager {
         // 環境設定に基づいてデバッグモードを設定
         $this->is_debug_mode = defined('WP_DEBUG') && WP_DEBUG;
         
+<<<<<<< HEAD
         // ログレベルの設定（デフォルトは'error'）
         $this->log_level = defined('WP_CROSS_POST_LOG_LEVEL') ? WP_CROSS_POST_LOG_LEVEL : 'error';
         
+=======
+>>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
         // デバッグモードが有効な場合のみ高度なログを有効化
         if ($this->is_debug_mode) {
             $this->log_level = 'debug';
@@ -85,6 +88,7 @@ class WP_Cross_Post_Debug_Manager {
             return;
         }
 
+<<<<<<< HEAD
         // ユーザー情報を追加
         $current_user = wp_get_current_user();
         $user_info = array(
@@ -101,23 +105,34 @@ class WP_Cross_Post_Debug_Manager {
             'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : ''
         );
 
+=======
+>>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
         $log_entry = array(
             'timestamp' => current_time('mysql'),
             'level' => $level,
             'message' => $message,
             'context' => $context,
+<<<<<<< HEAD
             'user_info' => $user_info,
             'request_info' => $request_info,
+=======
+>>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
             'backtrace' => debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS)
         );
 
         // WordPressのエラーログに記録
         error_log(sprintf(
+<<<<<<< HEAD
             '[WP Cross Post] [%s] %s | User: %s | Request: %s | Context: %s',
             strtoupper($level),
             $message,
             $current_user->user_login,
             isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'N/A',
+=======
+            '[WP Cross Post] [%s] %s | Context: %s',
+            strtoupper($level),
+            $message,
+>>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
             json_encode($context)
         ));
 

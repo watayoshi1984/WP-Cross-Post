@@ -32,6 +32,7 @@ class WP_Cross_Post {
     private $site_handler;
     private $error_handler;
     private $debug_manager;
+<<<<<<< HEAD
     private $auth_manager;
     private $image_manager;
     private $post_data_preparer;
@@ -61,6 +62,15 @@ class WP_Cross_Post {
         $this->site_handler = new WP_Cross_Post_Site_Handler($this->debug_manager, $this->auth_manager, $this->error_manager, $this->api_handler, $this->rate_limit_manager);
         $this->sync_handler = new WP_Cross_Post_Sync_Handler($this->api_handler, $this->debug_manager, $this->site_handler, $this->auth_manager, $this->image_manager, $this->post_data_preparer, $this->error_manager, $this->rate_limit_manager);
         $this->error_handler = new WP_Cross_Post_Error_Handler();
+=======
+
+    public function __construct() {
+        $this->api_handler = new WP_Cross_Post_API_Handler();
+        $this->sync_handler = new WP_Cross_Post_Sync_Handler($this->api_handler);
+        $this->site_handler = new WP_Cross_Post_Site_Handler();
+        $this->error_handler = new WP_Cross_Post_Error_Handler();
+        $this->debug_manager = WP_Cross_Post_Debug_Manager::get_instance();
+>>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
 
         if ($this->debug_manager->is_debug_mode()) {
             add_action('init', array($this, 'start_performance_monitoring'));
@@ -264,6 +274,7 @@ class WP_Cross_Post {
 }
 
 add_action('wp_cross_post_daily_sync', function() {
+<<<<<<< HEAD
     $auth_manager = WP_Cross_Post_Auth_Manager::get_instance();
     $image_manager = WP_Cross_Post_Image_Manager::get_instance();
     $error_manager = WP_Cross_Post_Error_Manager::get_instance();
@@ -274,6 +285,9 @@ add_action('wp_cross_post_daily_sync', function() {
     $image_manager->set_dependencies($debug_manager, $auth_manager);
     
     $sync_engine = new WP_Cross_Post_Sync_Engine($auth_manager, $image_manager, $error_manager);
+=======
+    $sync_engine = new WP_Cross_Post_Sync_Engine();
+>>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
     $sync_engine->sync_taxonomies_to_all_sites();
 });
 
