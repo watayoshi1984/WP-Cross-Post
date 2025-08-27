@@ -50,6 +50,22 @@ jQuery(document).ready($ => {
                     </div>
                 `;
             }
+            
+            if (details.scheduled_tasks && details.scheduled_tasks.length > 0) {
+                statusHtml += `
+                    <div class="status-details info">
+                        <h4>スケジュールされたタスク:</h4>
+                        <ul>
+                            ${details.scheduled_tasks.map(task => `
+                                <li>
+                                    <i class="material-icons">schedule</i>
+                                    タスクID: ${task}
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
         }
 
         $syncStatus.html(statusHtml);
@@ -166,14 +182,29 @@ jQuery(document).ready($ => {
             return;
         }
 
-        if (!confirm('選択したサイトに同期しますか？')) {
+        // 並列処理と非同期処理のオプションを確認
+        const parallelSync = $('#parallel-sync').is(':checked');
+        const asyncSync = $('#async-sync').is(':checked');
+
+        let confirmMessage = '';
+        if (asyncSync) {
+            confirmMessage = '選択したサイトに非同期で同期しますか？';
+        } else if (parallelSync) {
+            confirmMessage = '選択したサイトに並列で同期しますか？';
+        } else {
+            confirmMessage = '選択したサイトに同期しますか？';
+        }
+
+        if (!confirm(confirmMessage)) {
             return;
         }
 
         isSyncing = true;
         $manualSyncButton.addClass('syncing');
         updateSyncStatus({
-            message: '同期を開始しました...',
+            message: asyncSync ? '非同期同期を開始しました...' : 
+                   parallelSync ? '並列同期を開始しました...' : 
+                   '同期を開始しました...',
             type: 'info'
         });
 
@@ -184,7 +215,9 @@ jQuery(document).ready($ => {
                 action: 'wp_cross_post_sync',
                 nonce: wpCrossPost.nonce,
                 post_id: postId,
-                selected_sites: selectedSites
+                selected_sites: selectedSites,
+                parallel_sync: parallelSync, // 並列処理オプションを追加
+                async_sync: asyncSync // 非同期処理オプションを追加
             },
             success: function(response) {
                 if (response.success) {
@@ -198,14 +231,15 @@ jQuery(document).ready($ => {
                     updateSyncStatus(errorData);
                 }
             },
-            error: function(jqXHR, textStatus, errorThrown) {
-                const errorData = handleSyncError(jqXHR);
-                if (errorData.details.error_code === 401) {
-                    errorData.message += '（認証エラー: パスワードを確認してください）';
-                } else if (errorData.details.error_code === 404) {
-                    errorData.message += '（エンドポイントが見つかりません）';
+            error: function(xhr, status, error) {
+                updateSyncStatus({
+                    message: wpCrossPost.i18n.syncError,
+                    type: 'error'
+                });
+                if (debug) {
+                    console.error('Sync error:', error);
+                    console.log('Response:', xhr.responseText);
                 }
-                updateSyncStatus(errorData);
             },
             complete: function() {
                 isSyncing = false;
@@ -214,19 +248,10 @@ jQuery(document).ready($ => {
         });
     });
 
+    // タクソノミーの同期
     $syncTaxonomiesButton.on('click', function() {
-        if (isSyncing) return;
-
-        if (!confirm('全サイトのカテゴリーとタグを同期しますか？')) {
-            return;
-        }
-
-        isSyncing = true;
-        $syncTaxonomiesButton.addClass('syncing');
-        updateSyncStatus({
-            message: 'カテゴリーとタグの同期を開始しました...',
-            type: 'info'
-        });
+        const $button = $(this);
+        const originalText = $button.text();
 
         $.ajax({
             url: wpCrossPost.ajaxUrl,
@@ -235,95 +260,118 @@ jQuery(document).ready($ => {
                 action: 'wp_cross_post_sync_taxonomies',
                 nonce: wpCrossPost.taxonomyNonce
             },
+            beforeSend: function() {
+                $button.prop('disabled', true).text('同期中...');
+            },
             success: function(response) {
                 if (response.success) {
-                    updateSyncStatus(response.data);
+                    updateSyncStatus({
+                        message: response.data,
+                        type: 'success'
+                    });
                 } else {
-                    const errorData = {
-                        message: response.data.message || 'カテゴリーとタグの同期に失敗しました。',
-                        type: 'error',
-                        details: response.data.details
-                    };
-                    updateSyncStatus(errorData);
+                    updateSyncStatus({
+                        message: response.data.message || wpCrossPost.i18n.taxonomySyncError,
+                        type: 'error'
+                    });
                 }
             },
-            error: function(jqXHR, textStatus, errorThrown) {
-                const errorData = handleSyncError(jqXHR);
-                if (errorData.details.error_code === 401) {
-                    errorData.message += '（認証エラー: パスワードを確認してください）';
-                } else if (errorData.details.error_code === 404) {
-                    errorData.message += '（エンドポイントが見つかりません）';
-                }
-                updateSyncStatus(errorData);
+            error: function() {
+                updateSyncStatus({
+                    message: wpCrossPost.i18n.taxonomySyncError,
+                    type: 'error'
+                });
             },
             complete: function() {
-                isSyncing = false;
-                $syncTaxonomiesButton.removeClass('syncing');
+                $button.prop('disabled', false).text(originalText);
             }
         });
     });
 
-    $('#sync-button').on('click', function() {
-        const postId = $('#post_ID').val();
-        
+    // 設定のエクスポート
+    $('#export-settings').on('click', function() {
         $.ajax({
-            url: ajaxurl,
+            url: wpCrossPost.ajaxUrl,
             type: 'POST',
             data: {
-                action: 'wp_cross_post_sync',
-                post_id: postId,
-                nonce: wpCrossPost.nonce
-            },
-            beforeSend: function() {
-                $('#sync-status').html('同期中...');
+                action: 'wp_cross_post_export_settings',
+                nonce: wpCrossPost.exportSettingsNonce
             },
             success: function(response) {
                 if (response.success) {
-                    $('#sync-status').html(
-                        `同期成功: ${response.data.success_count}サイト`
-                    );
+                    // ダウンロードリンクを作成
+                    var element = document.createElement('a');
+                    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(response.data));
+                    element.setAttribute('download', 'wp-cross-post-settings.json');
+                    element.style.display = 'none';
+                    document.body.appendChild(element);
+                    element.click();
+                    document.body.removeChild(element);
                 } else {
-                    $('#sync-status').html(
-                        `エラー: ${response.data.error}`
-                    );
+                    alert('設定のエクスポートに失敗しました。');
                 }
+            },
+            error: function() {
+                alert('設定のエクスポートに失敗しました。');
             }
         });
     });
-
-    // 更新されたエラーハンドリング
-    function handleSyncError(error) {
-        let errorMessage = '不明なエラーが発生しました';
-        
-        if (error.responseJSON) {
-            errorMessage = error.responseJSON.data.error || errorMessage;
-            if (error.responseJSON.data.trace) {
-                console.error('エラートレース:', error.responseJSON.data.trace);
-            }
-        } else if (error.statusText) {
-            errorMessage = `${error.status}: ${error.statusText}`;
+    
+    // 設定のインポート
+    $('#import-settings').on('click', function() {
+        var fileInput = $('#import-settings-file')[0];
+        if (fileInput.files.length === 0) {
+            alert('インポートするファイルを選択してください。');
+            return;
         }
         
-        return {
-            message: `同期失敗: ${errorMessage}`,
-            type: 'error',
-            details: {
-                error_code: error.status || 'unknown',
-                timestamp: new Date().toISOString()
-            }
+        var file = fileInput.files[0];
+        var reader = new FileReader();
+        
+        reader.onload = function(e) {
+            var settings = e.target.result;
+            
+            $.ajax({
+                url: wpCrossPost.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'wp_cross_post_import_settings',
+                    nonce: wpCrossPost.importSettingsNonce,
+                    settings: settings
+                },
+                success: function(response) {
+                    if (response.success) {
+                        alert('設定をインポートしました。');
+                        location.reload();
+                    } else {
+                        alert('設定のインポートに失敗しました。');
+                    }
+                },
+                error: function() {
+                    alert('設定のインポートに失敗しました。');
+                }
+            });
         };
+        
+        reader.readAsText(file);
+    });
+
+    // デバッグパネルの更新
+    if (debug) {
+        setInterval(() => {
+            $.ajax({
+                url: wpCrossPost.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'wp_cross_post_refresh_logs',
+                    nonce: wpCrossPost.debugNonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $('#debug-logs').html(response.data.logs);
+                    }
+                }
+            });
+        }, 5000);
     }
-
-    // リアルタイムログ表示
-    setInterval(() => {
-        debug.logs.getRecent().then(logs => {
-            $('#debug-logs').html(logs.map(log => 
-                `<div class="log-entry ${log.type}">[${log.timestamp}] ${log.message}</div>`
-            ));
-        });
-    }, 5000);
 });
-
-function showError(message) {
-    $('#error-message').html(`<div class="error notice">${message}</div>`);
-} 

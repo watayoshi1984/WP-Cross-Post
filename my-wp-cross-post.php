@@ -23,6 +23,7 @@ define('WP_CROSS_POST_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WP_CROSS_POST_PLUGIN_URL', plugin_dir_url(__FILE__));
 
 require_once WP_CROSS_POST_PLUGIN_DIR . 'includes/class-autoloader.php';
+require_once WP_CROSS_POST_PLUGIN_DIR . 'includes/class-config-manager.php';
 require_once WP_CROSS_POST_PLUGIN_DIR . 'includes/ajax-handlers.php';
 require_once WP_CROSS_POST_PLUGIN_DIR . 'includes/debug/class-debug-manager.php';
 
@@ -32,7 +33,6 @@ class WP_Cross_Post {
     private $site_handler;
     private $error_handler;
     private $debug_manager;
-<<<<<<< HEAD
     private $auth_manager;
     private $image_manager;
     private $post_data_preparer;
@@ -62,20 +62,12 @@ class WP_Cross_Post {
         $this->site_handler = new WP_Cross_Post_Site_Handler($this->debug_manager, $this->auth_manager, $this->error_manager, $this->api_handler, $this->rate_limit_manager);
         $this->sync_handler = new WP_Cross_Post_Sync_Handler($this->api_handler, $this->debug_manager, $this->site_handler, $this->auth_manager, $this->image_manager, $this->post_data_preparer, $this->error_manager, $this->rate_limit_manager);
         $this->error_handler = new WP_Cross_Post_Error_Handler();
-=======
-
-    public function __construct() {
-        $this->api_handler = new WP_Cross_Post_API_Handler();
-        $this->sync_handler = new WP_Cross_Post_Sync_Handler($this->api_handler);
-        $this->site_handler = new WP_Cross_Post_Site_Handler();
-        $this->error_handler = new WP_Cross_Post_Error_Handler();
-        $this->debug_manager = WP_Cross_Post_Debug_Manager::get_instance();
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
 
         if ($this->debug_manager->is_debug_mode()) {
             add_action('init', array($this, 'start_performance_monitoring'));
         }
 
+        add_action('init', array($this, 'register_post_types'));
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         add_action('add_meta_boxes', array($this, 'add_post_meta_box'));
@@ -89,12 +81,32 @@ class WP_Cross_Post {
         add_action('wp_ajax_wp_cross_post_refresh_logs', array($this, 'ajax_refresh_logs'));
         add_action('wp_ajax_wp_cross_post_refresh_system_info', array($this, 'ajax_refresh_system_info'));
         add_action('wp_ajax_wp_cross_post_log_js_error', array($this, 'ajax_log_js_error'));
+        add_action('wp_ajax_wp_cross_post_export_settings', array($this, 'ajax_export_settings'));
+        add_action('wp_ajax_wp_cross_post_import_settings', array($this, 'ajax_import_settings'));
 
         // 定期実行のフック
         add_action('wp_cross_post_daily_sync', array($this->site_handler, 'sync_all_sites_taxonomies'));
+        
+        // 非同期処理のフック
+        add_action('wp_cross_post_process_async_sync', array($this, 'process_async_sync'), 10, 2);
 
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
+    }
+
+    public function register_post_types() {
+        // 非同期処理用のカスタムポストタイプを登録
+        register_post_type('wp_cross_post_async', array(
+            'labels' => array(
+                'name' => 'Async Sync Tasks',
+                'singular_name' => 'Async Sync Task',
+            ),
+            'public' => false,
+            'has_archive' => false,
+            'rewrite' => false,
+            'show_ui' => false,
+            'supports' => array('title'),
+        ));
     }
 
     public function start_performance_monitoring() {
@@ -156,6 +168,34 @@ class WP_Cross_Post {
         wp_send_json_success();
     }
 
+    public function ajax_export_settings() {
+        check_ajax_referer('wp_cross_post_export_settings', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('権限がありません。');
+        }
+
+        $settings = WP_Cross_Post_Config_Manager::export_settings();
+        wp_send_json_success($settings);
+    }
+
+    public function ajax_import_settings() {
+        check_ajax_referer('wp_cross_post_import_settings', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('権限がありません。');
+        }
+
+        $settings = sanitize_text_field($_POST['settings']);
+        $result = WP_Cross_Post_Config_Manager::import_settings($settings);
+
+        if ($result) {
+            wp_send_json_success('設定をインポートしました。');
+        } else {
+            wp_send_json_error('設定のインポートに失敗しました。');
+        }
+    }
+
     public function add_admin_menu() {
         add_menu_page(
             'WP Cross Post',
@@ -200,24 +240,61 @@ class WP_Cross_Post {
                 'taxonomyNonce' => wp_create_nonce('wp_cross_post_taxonomy_sync'),
                 'addSiteNonce' => wp_create_nonce('wp_cross_post_add_site'),
                 'removeSiteNonce' => wp_create_nonce('wp_cross_post_remove_site'),
-                'syncingText' => '同期中...',
-                'syncCompleteText' => '同期完了',
-                'syncErrorText' => '同期エラー',
-                'confirmSync' => 'タクソノミーの同期を開始しますか？',
+                'debugNonce' => wp_create_nonce('wp_cross_post_debug'),
+                'exportSettingsNonce' => wp_create_nonce('wp_cross_post_export_settings'),
+                'importSettingsNonce' => wp_create_nonce('wp_cross_post_import_settings'),
                 'i18n' => array(
-                    'syncSuccess' => '同期が完了しました。',
-                    'syncError' => '同期中にエラーが発生しました。',
-                    'confirmManualSync' => 'タクソノミーの手動同期を開始しますか？\n※同期には時間がかかる場合があります。'
+                    'syncError' => __('同期に失敗しました。', 'wp-cross-post'),
+                    'taxonomySyncError' => __('タクソノミーの同期に失敗しました。', 'wp-cross-post')
                 )
             ));
 
-            wp_enqueue_style(
-                'wp-cross-post-admin',
-                plugins_url('assets/css/admin.css', __FILE__),
-                array('material-icons'),
-                WP_CROSS_POST_VERSION
-            );
+            if ($hook === 'post.php' || $hook === 'post-new.php') {
+                wp_enqueue_script(
+                    'wp-cross-post-post',
+                    plugins_url('admin/js/post.js', __FILE__),
+                    array('jquery'),
+                    WP_CROSS_POST_VERSION,
+                    true
+                );
+            }
         }
+    }
+
+    public function add_post_meta_box() {
+        add_meta_box(
+            'wp-cross-post-meta-box',
+            'WP Cross Post',
+            array($this, 'render_post_meta_box'),
+            array('post', 'page'),
+            'side',
+            'default'
+        );
+    }
+
+    public function render_post_meta_box($post) {
+        include WP_CROSS_POST_PLUGIN_DIR . 'admin/post-meta-box.php';
+    }
+
+    public function save_post_meta($post_id) {
+        // 自動保存の場合は何もしない
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+            return;
+        }
+
+        // 権限を確認
+        if (!current_user_can('edit_post', $post_id)) {
+            return;
+        }
+
+        // ノンスを確認
+        if (!isset($_POST['wp_cross_post_nonce']) || !wp_verify_nonce($_POST['wp_cross_post_nonce'], 'wp_cross_post_sync')) {
+            return;
+        }
+
+        // 同期先サイトの保存
+        $selected_sites = isset($_POST['wp_cross_post_sites']) ? array_map('sanitize_text_field', $_POST['wp_cross_post_sites']) : array();
+        update_post_meta($post_id, '_wp_cross_post_sites', $selected_sites);
     }
 
     public function render_settings_page() {
@@ -228,75 +305,98 @@ class WP_Cross_Post {
         include WP_CROSS_POST_PLUGIN_DIR . 'admin/sites.php';
     }
 
-    public function add_post_meta_box() {
-        add_meta_box(
-            'wp-cross-post-meta-box',
-            'クロス投稿設定',
-            array($this, 'render_post_meta_box'),
-            'post',
-            'side',
-            'high'
+    /**
+     * 非同期同期処理をスケジュール
+     */
+    public function schedule_async_sync($post_id, $site_id) {
+        // 非同期処理用のポストを作成
+        $post_data = array(
+            'post_title' => 'Async Sync Task - Post ' . $post_id . ' to Site ' . $site_id,
+            'post_type' => 'wp_cross_post_async',
+            'post_status' => 'publish',
         );
+        
+        $task_id = wp_insert_post($post_data);
+        
+        if ($task_id) {
+            // メタデータとして投稿IDとサイトIDを保存
+            update_post_meta($task_id, '_wp_cross_post_post_id', $post_id);
+            update_post_meta($task_id, '_wp_cross_post_site_id', $site_id);
+            
+            // すぐに処理をスケジュール
+            wp_schedule_single_event(time(), 'wp_cross_post_process_async_sync', array($post_id, $site_id));
+            
+            $this->debug_manager->log('非同期同期処理をスケジュール', 'info', array(
+                'post_id' => $post_id,
+                'site_id' => $site_id,
+                'task_id' => $task_id
+            ));
+            
+            return $task_id;
+        }
+        
+        return false;
     }
 
-    public function render_post_meta_box($post) {
-        include WP_CROSS_POST_PLUGIN_DIR . 'admin/post-meta-box.php';
-    }
-
-    public function save_post_meta($post_id) {
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
-        if (!current_user_can('edit_post', $post_id)) return;
-
-        if (isset($_POST['wp_cross_post_sites'])) {
-            $selected_sites = array_map('sanitize_text_field', $_POST['wp_cross_post_sites']);
-            update_post_meta($post_id, '_wp_cross_post_sites', $selected_sites);
+    /**
+     * 非同期同期処理を実行
+     */
+    public function process_async_sync($post_id, $site_id) {
+        $this->debug_manager->log('非同期同期処理を開始', 'info', array(
+            'post_id' => $post_id,
+            'site_id' => $site_id
+        ));
+        
+        // 同期処理を実行
+        $result = $this->sync_handler->sync_to_single_site($post_id, $site_id);
+        
+        if (is_wp_error($result)) {
+            $this->debug_manager->log('非同期同期処理に失敗', 'error', array(
+                'post_id' => $post_id,
+                'site_id' => $site_id,
+                'error' => $result->get_error_message()
+            ));
         } else {
-            delete_post_meta($post_id, '_wp_cross_post_sites');
+            $this->debug_manager->log('非同期同期処理が成功', 'info', array(
+                'post_id' => $post_id,
+                'site_id' => $site_id,
+                'remote_post_id' => $result
+            ));
         }
+        
+        // 非同期処理用のポストを削除
+        $tasks = get_posts(array(
+            'post_type' => 'wp_cross_post_async',
+            'meta_query' => array(
+                array(
+                    'key' => '_wp_cross_post_post_id',
+                    'value' => $post_id,
+                ),
+                array(
+                    'key' => '_wp_cross_post_site_id',
+                    'value' => $site_id,
+                )
+            ),
+            'posts_per_page' => 1,
+        ));
+        
+        if (!empty($tasks)) {
+            wp_delete_post($tasks[0]->ID, true);
+        }
+        
+        return $result;
     }
 
-    /**
-     * プラグインの有効化時の処理
-     */
     public function activate() {
-        $this->site_handler->schedule_taxonomies_sync();
+        // 毎日午前3時にタクソノミーの自動同期をスケジュール
         if (!wp_next_scheduled('wp_cross_post_daily_sync')) {
-            wp_schedule_event(strtotime('03:00:00'), 'daily', 'wp_cross_post_daily_sync');
+            wp_schedule_event(strtotime('tomorrow 03:00'), 'daily', 'wp_cross_post_daily_sync');
         }
     }
 
-    /**
-     * プラグインの無効化時の処理
-     */
     public function deactivate() {
-        $this->site_handler->unschedule_taxonomies_sync();
+        // スケジュールされたイベントを削除
+        wp_clear_scheduled_hook('wp_cross_post_daily_sync');
+        wp_clear_scheduled_hook('wp_cross_post_process_async_sync');
     }
 }
-
-add_action('wp_cross_post_daily_sync', function() {
-<<<<<<< HEAD
-    $auth_manager = WP_Cross_Post_Auth_Manager::get_instance();
-    $image_manager = WP_Cross_Post_Image_Manager::get_instance();
-    $error_manager = WP_Cross_Post_Error_Manager::get_instance();
-    $debug_manager = WP_Cross_Post_Debug_Manager::get_instance();
-    
-    // 依存関係の設定
-    $error_manager->set_dependencies($debug_manager);
-    $image_manager->set_dependencies($debug_manager, $auth_manager);
-    
-    $sync_engine = new WP_Cross_Post_Sync_Engine($auth_manager, $image_manager, $error_manager);
-=======
-    $sync_engine = new WP_Cross_Post_Sync_Engine();
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
-    $sync_engine->sync_taxonomies_to_all_sites();
-});
-
-add_filter('cron_schedules', function($schedules) {
-    $schedules['every_15min'] = [
-        'interval' => 900,
-        'display'  => __('Every 15 Minutes')
-    ];
-    return $schedules;
-});
-
-new WP_Cross_Post();

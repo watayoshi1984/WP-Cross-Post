@@ -24,6 +24,23 @@ if (empty($sites)): ?>
             <?php endforeach; ?>
         </div>
 
+        <div class="sync-options">
+            <label class="parallel-sync-option">
+                <input type="checkbox" 
+                       id="parallel-sync"
+                       name="parallel_sync" 
+                       value="1">
+                並列処理で同期する
+            </label>
+            <label class="async-sync-option">
+                <input type="checkbox" 
+                       id="async-sync"
+                       name="async_sync" 
+                       value="1">
+                非同期処理で同期する
+            </label>
+        </div>
+
         <div class="sync-controls">
             <button type="button" 
                     class="button button-primary sync-button" 
@@ -53,6 +70,19 @@ if (empty($sites)): ?>
         margin-left: 20px;
         color: #666;
         font-size: 12px;
+    }
+    .sync-options {
+        padding: 0 12px 12px;
+        border-bottom: 1px solid #ddd;
+    }
+    .parallel-sync-option, .async-sync-option {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+    }
+    .async-sync-option {
+        margin-top: 8px;
     }
     .sync-controls {
         padding: 12px;
@@ -89,6 +119,10 @@ if (empty($sites)): ?>
     .status-message.error {
         background: #fcf0f1;
         color: #cc1818;
+    }
+    .status-message.info {
+        background: #f0f6fc;
+        color: #0a4b78;
     }
     @keyframes spin {
         100% { transform: rotate(360deg); }

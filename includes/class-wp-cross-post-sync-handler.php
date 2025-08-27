@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 /**
  * WP Cross Post 同期ハンドラー
  *
@@ -34,18 +33,6 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         $this->post_data_preparer = $post_data_preparer;
         $this->error_manager = $error_manager;
         $this->rate_limit_manager = $rate_limit_manager;
-=======
-<?php
-class WP_Cross_Post_Sync_Handler {
-    private $api_handler;
-    private $debug_manager;
-    private $site_handler;
-
-    public function __construct($api_handler) {
-        $this->api_handler = $api_handler;
-        $this->debug_manager = WP_Cross_Post_Debug_Manager::get_instance();
-        $this->site_handler = new WP_Cross_Post_Site_Handler();
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
     }
 
     public function ajax_sync_post() {
@@ -61,34 +48,68 @@ class WP_Cross_Post_Sync_Handler {
 
         $post_id = intval($_POST['post_id']);
         $selected_sites = isset($_POST['selected_sites']) ? array_map('sanitize_text_field', $_POST['selected_sites']) : array();
+        $parallel_sync = isset($_POST['parallel_sync']) ? (bool) $_POST['parallel_sync'] : false;
+        $async_sync = isset($_POST['async_sync']) ? (bool) $_POST['async_sync'] : false;
 
-<<<<<<< HEAD
-        $this->debug_manager->log('投稿同期を開始', 'info', array(
-            'post_id' => $post_id,
-            'selected_site_count' => count($selected_sites)
-        ));
-        
-=======
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
-        $this->debug_manager->start_performance_monitoring('sync_post_' . $post_id);
-        $result = $this->sync_post($post_id, $selected_sites);
-        $this->debug_manager->end_performance_monitoring('sync_post_' . $post_id);
+        if ($async_sync) {
+            $this->debug_manager->log('非同期投稿同期を開始', 'info', array(
+                'post_id' => $post_id,
+                'selected_site_count' => count($selected_sites),
+                'async_sync' => $async_sync
+            ));
+            
+            // 各サイトに対して個別に非同期処理をスケジュール
+            $scheduled_tasks = array();
+            foreach ($selected_sites as $site_id) {
+                $task_id = $this->schedule_async_sync($post_id, $site_id);
+                if ($task_id) {
+                    $scheduled_tasks[] = $task_id;
+                }
+            }
+            
+            wp_send_json_success(array(
+                'message' => sprintf(
+                    '%d件の非同期同期タスクをスケジュールしました。',
+                    count($scheduled_tasks)
+                ),
+                'type' => 'success',
+                'details' => array(
+                    'scheduled_tasks' => $scheduled_tasks
+                )
+            ));
+        } elseif ($parallel_sync) {
+            $this->debug_manager->log('並列投稿同期を開始', 'info', array(
+                'post_id' => $post_id,
+                'selected_site_count' => count($selected_sites),
+                'parallel_sync' => $parallel_sync
+            ));
+            
+            $this->debug_manager->start_performance_monitoring('sync_post_parallel_' . $post_id);
+            $result = $this->sync_post_parallel($post_id, $selected_sites);
+            $this->debug_manager->end_performance_monitoring('sync_post_parallel_' . $post_id);
+        } else {
+            $this->debug_manager->log('投稿同期を開始', 'info', array(
+                'post_id' => $post_id,
+                'selected_site_count' => count($selected_sites),
+                'parallel_sync' => $parallel_sync
+            ));
+            
+            $this->debug_manager->start_performance_monitoring('sync_post_' . $post_id);
+            $result = $this->sync_post($post_id, $selected_sites);
+            $this->debug_manager->end_performance_monitoring('sync_post_' . $post_id);
+        }
 
-        if (is_wp_error($result)) {
-<<<<<<< HEAD
+        if (isset($result) && is_wp_error($result)) {
             $this->debug_manager->log('同期に失敗: ' . $result->get_error_message(), 'error', array(
                 'post_id' => $post_id,
                 'error_data' => $result->get_error_data()
             ));
-=======
-            $this->debug_manager->log('同期に失敗: ' . $result->get_error_message(), 'error');
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
             wp_send_json_error(array(
                 'message' => $result->get_error_message(),
                 'type' => 'error',
                 'details' => $result->get_error_data()
             ));
-        } else {
+        } elseif (isset($result)) {
             $success_sites = array();
             $failed_sites = array();
             
@@ -110,14 +131,11 @@ class WP_Cross_Post_Sync_Handler {
             $total_count = count($selected_sites);
 
             if ($success_count === 0) {
-<<<<<<< HEAD
                 $this->debug_manager->log('すべてのサイトで同期に失敗', 'error', array(
                     'post_id' => $post_id,
                     'failed_site_count' => count($failed_sites)
                 ));
                 
-=======
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
                 wp_send_json_error(array(
                     'message' => 'すべてのサイトで同期に失敗しました。',
                     'type' => 'error',
@@ -126,15 +144,12 @@ class WP_Cross_Post_Sync_Handler {
                     )
                 ));
             } elseif ($success_count < $total_count) {
-<<<<<<< HEAD
                 $this->debug_manager->log('一部のサイトで同期に失敗', 'warning', array(
                     'post_id' => $post_id,
                     'success_count' => $success_count,
                     'total_count' => $total_count
                 ));
                 
-=======
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
                 wp_send_json_success(array(
                     'message' => sprintf(
                         '一部のサイトで同期が完了しました（%d/%d成功）。',
@@ -148,14 +163,11 @@ class WP_Cross_Post_Sync_Handler {
                     )
                 ));
             } else {
-<<<<<<< HEAD
                 $this->debug_manager->log('すべてのサイトで同期が成功', 'info', array(
                     'post_id' => $post_id,
                     'success_site_count' => $success_count
                 ));
                 
-=======
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
                 wp_send_json_success(array(
                     'message' => 'すべてのサイトで同期が完了しました。',
                     'type' => 'success',
@@ -167,12 +179,31 @@ class WP_Cross_Post_Sync_Handler {
         }
     }
     
+    /**
+     * 非同期処理をスケジュール
+     */
+    private function schedule_async_sync($post_id, $site_id) {
+        // WP_Cross_Postのインスタンスを取得
+        global $wp_cross_post;
+        
+        if ($wp_cross_post && method_exists($wp_cross_post, 'schedule_async_sync')) {
+            return $wp_cross_post->schedule_async_sync($post_id, $site_id);
+        }
+        
+        // フォールバック: 通常の同期処理
+        $this->debug_manager->log('非同期処理が利用できません。通常の同期処理を実行します。', 'warning', array(
+            'post_id' => $post_id,
+            'site_id' => $site_id
+        ));
+        
+        return $this->sync_to_single_site($post_id, $site_id);
+    }
+    
     public function sync_post($post_id, $selected_sites) {
         $this->debug_manager->log(sprintf(
             '投稿ID %d の同期を開始（対象サイト: %s）',
             $post_id,
             implode(', ', $selected_sites)
-<<<<<<< HEAD
         ), 'info', array(
             'post_id' => $post_id,
             'selected_sites' => $selected_sites
@@ -194,20 +225,6 @@ class WP_Cross_Post_Sync_Handler {
                 'post_id' => $post_id,
                 'error' => $post_data->get_error_message()
             ));
-=======
-        ), 'info');
-
-        $post = get_post($post_id);
-        if (!$post) {
-            $this->debug_manager->log('無効な投稿ID: ' . $post_id, 'error');
-            return new WP_Error('invalid_post', '無効な投稿IDです。');
-        }
-
-        // 投稿データの準備
-        $post_data = $this->prepare_post_data($post, $selected_sites);
-
-        if (is_wp_error($post_data)) {
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
             return $post_data;
         }
 
@@ -216,15 +233,10 @@ class WP_Cross_Post_Sync_Handler {
             $this->debug_manager->start_performance_monitoring('sync_to_site_' . $site_id);
             $site_data = $this->get_site_data($site_id);
             if (!$site_data) {
-<<<<<<< HEAD
                 $this->debug_manager->log('無効なサイトID: ' . $site_id, 'error', array(
                     'site_id' => $site_id
                 ));
                 $results[$site_id] = $this->error_manager->handle_general_error('無効なサイトIDです。', 'invalid_site');
-=======
-                $this->debug_manager->log('無効なサイトID: ' . $site_id, 'error');
-                $results[$site_id] = new WP_Error('invalid_site', '無効なサイトIDです。');
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
                 continue;
             }
 
@@ -235,19 +247,14 @@ class WP_Cross_Post_Sync_Handler {
                     'サイト %s への接続に失敗: %s',
                     $site_data['url'],
                     $test_result->get_error_message()
-<<<<<<< HEAD
                 ), 'error', array(
                     'site_url' => $site_data['url'],
                     'error' => $test_result->get_error_message()
                 ));
-=======
-                ), 'error');
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
                 $results[$site_id] = $test_result;
                 continue;
             }
 
-<<<<<<< HEAD
             // アイキャッチ画像の同期
             if (isset($post_data['featured_media'])) {
                 $this->debug_manager->log('アイキャッチ画像の同期を開始', 'info', array(
@@ -279,41 +286,6 @@ class WP_Cross_Post_Sync_Handler {
                         'post_id' => $post_id,
                         'site_url' => $site_data['url']
                     ));
-=======
-            // アイキャッチ画像の同期（最大3回まで再試行）
-            if (isset($post_data['featured_media'])) {
-                $this->debug_manager->log('アイキャッチ画像の同期を開始', 'info');
-                $media_result = null;
-                $retry_count = 0;
-                $max_retries = 3;
-
-                while ($retry_count < $max_retries) {
-                    $media_result = $this->sync_featured_image($site_data, $post_data['featured_media'], $post_id);
-                    if ($media_result) {
-                        break;
-                    }
-                    $retry_count++;
-                    if ($retry_count < $max_retries) {
-                    $this->debug_manager->log(sprintf(
-                            'アイキャッチ画像の同期に失敗。%d回目の再試行を行います。',
-                            $retry_count + 1
-                        ), 'warning');
-                        sleep(2); // 2秒待機して再試行
-                    }
-                }
-
-                if ($media_result) {
-                    // メディアURLの取得を確認
-                    $media_url = $this->get_remote_media_url($media_result['id'], $site_data);
-                    if (!is_wp_error($media_url)) {
-                $post_data['featured_media'] = $media_result;
-                        $this->debug_manager->log('アイキャッチ画像の同期が完了: ' . $media_url, 'info');
-                    } else {
-                        $this->debug_manager->log('アイキャッチ画像のURL取得に失敗しましたが、投稿の同期は継続します', 'warning');
-                    }
-                } else {
-                    $this->debug_manager->log('アイキャッチ画像の同期に失敗しましたが、投稿の同期は継続します', 'warning');
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
                 }
             }
             
@@ -327,43 +299,223 @@ class WP_Cross_Post_Sync_Handler {
                     'サイト %s への同期が完了（リモート投稿ID: %d）',
                     $site_data['url'],
                     $remote_post_id
-<<<<<<< HEAD
                 ), 'info', array(
                     'post_id' => $post_id,
                     'site_url' => $site_data['url'],
                     'remote_post_id' => $remote_post_id
                 ));
-=======
-                ), 'info');
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
             } else {
                 $this->debug_manager->log(sprintf(
                     'サイト %s への同期に失敗: %s',
                     $site_data['url'],
                     $remote_post_id->get_error_message()
-<<<<<<< HEAD
                 ), 'error', array(
                     'post_id' => $post_id,
                     'site_url' => $site_data['url'],
                     'error' => $remote_post_id->get_error_message()
                 ));
-=======
-                ), 'error');
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
             }
 
             $this->debug_manager->end_performance_monitoring('sync_to_site_' . $site_id);
         }
 
-<<<<<<< HEAD
         $this->debug_manager->log('投稿同期を完了', 'info', array(
             'post_id' => $post_id,
             'success_count' => count(array_filter($results, function($result) { return !is_wp_error($result); })),
             'total_count' => count($results)
         ));
         
-=======
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
+        return $results;
+    }
+
+    /**
+     * 単一サイトへの同期処理
+     */
+    public function sync_to_single_site($post_id, $site_id) {
+        $this->debug_manager->log(sprintf(
+            '投稿ID %d をサイト %s に同期開始',
+            $post_id,
+            $site_id
+        ), 'info');
+
+        $post = get_post($post_id);
+        if (!$post) {
+            $this->debug_manager->log('無効な投稿ID: ' . $post_id, 'error');
+            return new WP_Error('invalid_post', '無効な投稿IDです。');
+        }
+
+        // サイトデータの取得
+        $site_data = $this->site_handler->get_site_data($site_id);
+        if (!$site_data) {
+            $this->debug_manager->log('無効なサイトID: ' . $site_id, 'error');
+            return new WP_Error('invalid_site', '無効なサイトIDです。');
+        }
+
+        // サイトへの接続テスト
+        $test_result = $this->api_handler->test_connection($site_data);
+        if (is_wp_error($test_result)) {
+            $this->debug_manager->log(sprintf(
+                'サイト %s への接続に失敗: %s',
+                $site_data['url'],
+                $test_result->get_error_message()
+            ), 'error');
+            return $test_result;
+        }
+
+        // 投稿データの準備
+        $post_data = $this->post_data_preparer->prepare_post_data($post, array($site_id));
+
+        if (is_wp_error($post_data)) {
+            $this->debug_manager->log('投稿データの準備に失敗', 'error', array(
+                'post_id' => $post_id,
+                'error' => $post_data->get_error_message()
+            ));
+            return $post_data;
+        }
+
+        // アイキャッチ画像の同期
+        if (isset($post_data['featured_media'])) {
+            $this->debug_manager->log('アイキャッチ画像の同期を開始', 'info', array(
+                'post_id' => $post_id,
+                'site_url' => $site_data['url']
+            ));
+            
+            $media_result = $this->image_manager->sync_featured_image($site_data, $post_data['featured_media'], $post_id);
+
+            if ($media_result) {
+                // メディアURLの取得を確認
+                $media_url = $this->image_manager->get_remote_media_url($media_result['id'], $site_data);
+                if (!is_wp_error($media_url)) {
+                    $post_data['featured_media'] = $media_result;
+                    $this->debug_manager->log('アイキャッチ画像の同期が完了: ' . $media_url, 'info', array(
+                        'post_id' => $post_id,
+                        'site_url' => $site_data['url'],
+                        'media_url' => $media_url
+                    ));
+                } else {
+                    $this->debug_manager->log('アイキャッチ画像のURL取得に失敗しましたが、投稿の同期は継続します', 'warning', array(
+                        'post_id' => $post_id,
+                        'site_url' => $site_data['url'],
+                        'error' => $media_url->get_error_message()
+                    ));
+                }
+            } else {
+                $this->debug_manager->log('アイキャッチ画像の同期に失敗しましたが、投稿の同期は継続します', 'warning', array(
+                    'post_id' => $post_id,
+                    'site_url' => $site_data['url']
+                ));
+            }
+        }
+        
+        // レート制限を考慮した投稿の同期
+        $remote_post_id = $this->rate_limit_manager->sync_with_rate_limit($site_data, $post_data);
+        
+        if (!is_wp_error($remote_post_id)) {
+            $this->site_handler->save_sync_info($post_id, $site_id, $remote_post_id);
+            $this->debug_manager->log(sprintf(
+                'サイト %s への同期が完了（リモート投稿ID: %d）',
+                $site_data['url'],
+                $remote_post_id
+            ), 'info', array(
+                'post_id' => $post_id,
+                'site_url' => $site_data['url'],
+                'remote_post_id' => $remote_post_id
+            ));
+        } else {
+            $this->debug_manager->log(sprintf(
+                'サイト %s への同期に失敗: %s',
+                $site_data['url'],
+                $remote_post_id->get_error_message()
+            ), 'error', array(
+                'post_id' => $post_id,
+                'site_url' => $site_data['url'],
+                'error' => $remote_post_id->get_error_message()
+            ));
+        }
+
+        return $remote_post_id;
+    }
+
+    /**
+     * 並列処理による複数サイトへの同期
+     */
+    public function sync_post_parallel($post_id, $selected_sites) {
+        $this->debug_manager->log(sprintf(
+            '投稿ID %d の並列同期を開始（対象サイト: %s）',
+            $post_id,
+            implode(', ', $selected_sites)
+        ), 'info', array(
+            'post_id' => $post_id,
+            'selected_sites' => $selected_sites
+        ));
+
+        $post = get_post($post_id);
+        if (!$post) {
+            $this->debug_manager->log('無効な投稿ID', 'error', array(
+                'post_id' => $post_id
+            ));
+            return $this->error_manager->handle_general_error('無効な投稿IDです。', 'invalid_post');
+        }
+
+        // 投稿データの準備
+        $post_data = $this->post_data_preparer->prepare_post_data($post, $selected_sites);
+
+        if (is_wp_error($post_data)) {
+            $this->debug_manager->log('投稿データの準備に失敗', 'error', array(
+                'post_id' => $post_id,
+                'error' => $post_data->get_error_message()
+            ));
+            return $post_data;
+        }
+
+        $results = array();
+        $async_requests = array();
+        
+        // 各サイトへの非同期リクエストを準備
+        foreach($selected_sites as $site_id) {
+            $site_data = $this->site_handler->get_site_data($site_id);
+            if (!$site_data) {
+                $this->debug_manager->log('無効なサイトID: ' . $site_id, 'error', array(
+                    'site_id' => $site_id
+                ));
+                $results[$site_id] = $this->error_manager->handle_general_error('無効なサイトIDです。', 'invalid_site');
+                continue;
+            }
+
+            // 非同期リクエストを準備
+            $async_requests[$site_id] = array(
+                'url' => admin_url('admin-ajax.php'),
+                'args' => array(
+                    'timeout' => 0.01,
+                    'blocking' => false,
+                    'body' => array(
+                        'action' => 'wp_cross_post_sync_single_site',
+                        'nonce' => wp_create_nonce('wp_cross_post_sync'),
+                        'post_id' => $post_id,
+                        'site_id' => $site_id
+                    )
+                )
+            );
+        }
+
+        // 非同期リクエストを送信
+        foreach ($async_requests as $site_id => $request) {
+            $response = wp_remote_post($request['url'], $request['args']);
+            
+            // wp_remote_postが即座に返るため、実際の処理は別途実行される
+            if (is_wp_error($response)) {
+                $results[$site_id] = $response;
+            } else {
+                // 成功した場合は、後で結果を取得する必要がある
+                $results[$site_id] = 'async_request_sent';
+            }
+        }
+
+        $this->debug_manager->log('並列同期リクエストを送信完了', 'info', array(
+            'post_id' => $post_id,
+            'sent_request_count' => count($async_requests)
+        ));
+        
         return $results;
     }
 
@@ -794,11 +946,7 @@ class WP_Cross_Post_Sync_Handler {
      */
     private function sync_featured_image($site_data, $media_data, $post_id) {
         // WordPress 6.5以降のアプリケーションパスワード対応
-<<<<<<< HEAD
         $auth_header = $this->auth_manager->get_auth_header($site_data);
-=======
-        $auth_header = $this->get_auth_header($site_data);
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
         
         $response = wp_remote_post($site_data['url'] . '/wp-json/wp/v2/media', array(
             'timeout' => 60,
@@ -831,9 +979,6 @@ class WP_Cross_Post_Sync_Handler {
     }
 
     /**
-<<<<<<< HEAD
-     * リモートメディアURLの取得
-=======
      * 認証ヘッダーを取得
      */
     private function get_auth_header($site_data) {
@@ -961,7 +1106,6 @@ class WP_Cross_Post_Sync_Handler {
      * @param int $media_id メディアID
      * @param array $site_data サイト情報
      * @return string|WP_Error メディアのURL、またはエラー
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
      */
     private function get_remote_media_url($media_id, $site_data) {
         try {
@@ -972,11 +1116,7 @@ class WP_Cross_Post_Sync_Handler {
                 $site_data['url'] . '/wp-json/wp/v2/media/' . $media_id,
                 array(
                     'headers' => array(
-<<<<<<< HEAD
-                        'Authorization' => $this->auth_manager->get_auth_header($site_data)
-=======
                         'Authorization' => 'Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password'])
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
                     )
                 )
             );
@@ -997,30 +1137,10 @@ class WP_Cross_Post_Sync_Handler {
 
             $this->debug_manager->log('リモートメディアURLの取得が完了: ' . $media_data['source_url'], 'info');
             return $media_data['source_url'];
-<<<<<<< HEAD
-        } catch (Exception $e) {
-            $this->debug_manager->log('リモートメディアURLの取得に失敗: ' . $e->getMessage(), 'error');
-            return new WP_Error('media_url_error', $e->getMessage());
-        }
-    }
-
-    /**
-     * メモリ使用量の最適化
-     */
-    private function optimize_memory_usage() {
-        // 不要な変数を解放
-        unset($temp_data);
-        unset($processed_data);
-        
-        // ガベージコレクションを実行
-        if (function_exists('gc_collect_cycles')) {
-            gc_collect_cycles();
-=======
 
         } catch (Exception $e) {
             $this->debug_manager->log('リモートメディアURLの取得に失敗: ' . $e->getMessage(), 'error');
             return new WP_Error('remote_media_url_error', $e->getMessage());
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
         }
     }
 
@@ -1052,13 +1172,4 @@ class WP_Cross_Post_Sync_Handler {
         }
         return null;
     }
-<<<<<<< HEAD
-
-    private function sync_with_rate_limit($site_data, $post_data) {
-    }
-
-    private function save_sync_info($post_id, $site_id, $remote_post_id) {
-    }
-=======
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
 }
