@@ -415,7 +415,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         }
         
         // 投稿の同期
-        $remote_post_id = $this->api_handler->create_or_update_post($site_data, $post_data);
+        $remote_post_id = $this->api_handler->sync_post($site_data, $post_data);
         
         if (!is_wp_error($remote_post_id)) {
             $this->site_handler->save_sync_info($post_id, $site_id, $remote_post_id);
@@ -874,7 +874,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
 
         while ($retry_count < $max_retries) {
             // 投稿の作成を試みる
-            $result = $this->api_handler->create_post($site_data, $post_data);
+            $result = $this->api_handler->sync_post($site_data, $post_data);
 
             if (is_wp_error($result)) {
                 $last_error = $result;
@@ -916,9 +916,9 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
                     $this->debug_manager->log('アイキャッチ画像を投稿に設定: 画像ID ' . $featured_media_id . ', 投稿ID ' . $remote_post_id, 'info');
                     
                     // アイキャッチ画像を設定
-                    $update_result = $this->api_handler->update_post($site_data, $remote_post_id, array(
-                        'featured_media' => $featured_media_id
-                    ));
+                    // $update_result = $this->api_handler->update_post($site_data, $remote_post_id, array(
+                    //     'featured_media' => $featured_media_id
+                    // ));
                     
                     if (is_wp_error($update_result)) {
                         $this->debug_manager->log('アイキャッチ画像の設定に失敗: ' . $update_result->get_error_message(), 'warning');

@@ -218,7 +218,7 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
     public function sync_post($site_data, $post_data) {
         try {
             // URLのバリデーションと正規化
-            $normalized_url = $this->validate_and_normalize_url($site_data['url']);
+            $normalized_url = $this->normalize_site_url($site_data['url']);
             
             // レート制限のチェックと待機
             $rate_limit_result = $this->rate_limit_manager->check_and_wait_for_rate_limit($normalized_url);
@@ -442,7 +442,7 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
     public function sync_all_taxonomies($site_data, $taxonomy) {
         try {
             // URLのバリデーションと正規化
-            $normalized_url = $this->validate_and_normalize_url($site_data['url']);
+            $normalized_url = $this->normalize_site_url($site_data['url']);
             
             // レート制限のチェックと待機
             $rate_limit_result = $this->rate_limit_manager->check_and_wait_for_rate_limit($normalized_url);
