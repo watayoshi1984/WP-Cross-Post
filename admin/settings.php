@@ -42,8 +42,30 @@ if ($_POST && isset($_POST['wp_cross_post_settings_nonce'])) {
     }
 }
 
+// エラー通知設定が保存された場合の処理
+if ($_POST && isset($_POST['wp_cross_post_notification_settings_nonce'])) {
+    if (wp_verify_nonce($_POST['wp_cross_post_notification_settings_nonce'], 'wp_cross_post_save_notification_settings')) {
+        // エラー通知設定を保存
+        $notification_settings = array(
+            'enabled' => isset($_POST['notification_enabled']),
+            'email' => sanitize_email($_POST['notification_email']),
+            'threshold' => sanitize_text_field($_POST['notification_threshold'])
+        );
+        
+        $error_manager = WP_Cross_Post_Error_Manager::get_instance();
+        $error_manager->update_notification_settings($notification_settings);
+        
+        // 設定保存成功メッセージ
+        add_action('admin_notices', function() {
+            echo '<div class="notice notice-success is-dismissible"><p>エラー通知設定を保存しました。</p></div>';
+        });
+    }
+}
+
 // 現在の設定を取得
 $settings = WP_Cross_Post_Config_Manager::get_settings();
+$error_manager = WP_Cross_Post_Error_Manager::get_instance();
+$notification_settings = $error_manager->get_notification_settings();
 ?>
 
 <div class="wrap wp-cross-post-container">
@@ -226,6 +248,47 @@ $settings = WP_Cross_Post_Config_Manager::get_settings();
                     </td>
                 </tr>
             </table>
+        </div>
+        
+        <!-- エラー通知設定 -->
+        <div class="wp-cross-post-card">
+            <h2>エラー通知設定</h2>
+            <form method="post" action="">
+                <?php wp_nonce_field('wp_cross_post_save_notification_settings', 'wp_cross_post_notification_settings_nonce'); ?>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">通知有効化</th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="notification_enabled" <?php checked($notification_settings['enabled']); ?> />
+                                エラー通知を有効にする
+                            </label>
+                            <p class="description">エラーが発生した際に通知メールを送信します</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">通知先メールアドレス</th>
+                        <td>
+                            <input type="email" name="notification_email" value="<?php echo esc_attr($notification_settings['email']); ?>" />
+                            <p class="description">エラー通知を送信するメールアドレス</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">通知閾値</th>
+                        <td>
+                            <select name="notification_threshold">
+                                <option value="debug" <?php selected($notification_settings['threshold'], 'debug'); ?>>Debug</option>
+                                <option value="info" <?php selected($notification_settings['threshold'], 'info'); ?>>Info</option>
+                                <option value="notice" <?php selected($notification_settings['threshold'], 'notice'); ?>>Notice</option>
+                                <option value="warning" <?php selected($notification_settings['threshold'], 'warning'); ?>>Warning</option>
+                                <option value="error" <?php selected($notification_settings['threshold'], 'error'); ?>>Error</option>
+                            </select>
+                            <p class="description">このレベル以上のエラーを通知します</p>
+                        </td>
+                    </tr>
+                </table>
+                <?php submit_button('エラー通知設定を保存'); ?>
+            </form>
         </div>
         
         <?php submit_button('設定を保存'); ?>

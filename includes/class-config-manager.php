@@ -96,7 +96,7 @@ class WP_Cross_Post_Config_Manager {
     /**
      * 設定のバリデーション
      */
-    private static function validate_settings($settings) {
+    public static function validate_settings($settings) {
         // API設定のバリデーション
         if (isset($settings['api_settings'])) {
             $api_settings = $settings['api_settings'];
@@ -119,6 +119,34 @@ class WP_Cross_Post_Config_Manager {
             $cache_settings = $settings['cache_settings'];
             $cache_settings['cache_duration'] = max(60, min(86400, intval($cache_settings['cache_duration']))); // 1分 to 1日
             $settings['cache_settings'] = $cache_settings;
+        }
+        
+        // デバッグ設定のバリデーション
+        if (isset($settings['debug_settings'])) {
+            $debug_settings = $settings['debug_settings'];
+            $debug_settings['debug_mode'] = (bool) $debug_settings['debug_mode'];
+            $allowed_log_levels = ['debug', 'info', 'warning', 'error'];
+            if (!in_array($debug_settings['log_level'], $allowed_log_levels)) {
+                $debug_settings['log_level'] = 'info';
+            }
+            $settings['debug_settings'] = $debug_settings;
+        }
+        
+        // 同期設定のバリデーション
+        if (isset($settings['sync_settings'])) {
+            $sync_settings = $settings['sync_settings'];
+            $sync_settings['parallel_sync'] = (bool) $sync_settings['parallel_sync'];
+            $sync_settings['async_sync'] = (bool) $sync_settings['async_sync'];
+            $sync_settings['rate_limit'] = (bool) $sync_settings['rate_limit'];
+            $settings['sync_settings'] = $sync_settings;
+        }
+        
+        // セキュリティ設定のバリデーション
+        if (isset($settings['security_settings'])) {
+            $security_settings = $settings['security_settings'];
+            $security_settings['verify_ssl'] = (bool) $security_settings['verify_ssl'];
+            $security_settings['encrypt_credentials'] = (bool) $security_settings['encrypt_credentials'];
+            $settings['security_settings'] = $security_settings;
         }
 
         return $settings;
@@ -156,5 +184,65 @@ class WP_Cross_Post_Config_Manager {
         }
         
         return false;
+    }
+    
+    /**
+     * 設定のサニタイズ
+     */
+    public static function sanitize_settings($settings) {
+        $sanitized_settings = array();
+        
+        // API設定のサニタイズ
+        if (isset($settings['api_settings'])) {
+            $sanitized_settings['api_settings'] = array(
+                'timeout' => intval($settings['api_settings']['timeout']),
+                'retries' => intval($settings['api_settings']['retries']),
+                'batch_size' => intval($settings['api_settings']['batch_size'])
+            );
+        }
+        
+        // 同期設定のサニタイズ
+        if (isset($settings['sync_settings'])) {
+            $sanitized_settings['sync_settings'] = array(
+                'parallel_sync' => (bool) $settings['sync_settings']['parallel_sync'],
+                'async_sync' => (bool) $settings['sync_settings']['async_sync'],
+                'rate_limit' => (bool) $settings['sync_settings']['rate_limit']
+            );
+        }
+        
+        // 画像設定のサニタイズ
+        if (isset($settings['image_settings'])) {
+            $sanitized_settings['image_settings'] = array(
+                'sync_images' => (bool) $settings['image_settings']['sync_images'],
+                'max_image_size' => intval($settings['image_settings']['max_image_size']),
+                'image_quality' => intval($settings['image_settings']['image_quality'])
+            );
+        }
+        
+        // デバッグ設定のサニタイズ
+        if (isset($settings['debug_settings'])) {
+            $sanitized_settings['debug_settings'] = array(
+                'debug_mode' => (bool) $settings['debug_settings']['debug_mode'],
+                'log_level' => sanitize_text_field($settings['debug_settings']['log_level'])
+            );
+        }
+        
+        // キャッシュ設定のサニタイズ
+        if (isset($settings['cache_settings'])) {
+            $sanitized_settings['cache_settings'] = array(
+                'enable_cache' => (bool) $settings['cache_settings']['enable_cache'],
+                'cache_duration' => intval($settings['cache_settings']['cache_duration'])
+            );
+        }
+        
+        // セキュリティ設定のサニタイズ
+        if (isset($settings['security_settings'])) {
+            $sanitized_settings['security_settings'] = array(
+                'verify_ssl' => (bool) $settings['security_settings']['verify_ssl'],
+                'encrypt_credentials' => (bool) $settings['security_settings']['encrypt_credentials']
+            );
+        }
+        
+        return $sanitized_settings;
     }
 }

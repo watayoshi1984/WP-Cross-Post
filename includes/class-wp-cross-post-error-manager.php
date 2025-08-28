@@ -43,6 +43,15 @@ class WP_Cross_Post_Error_Manager implements WP_Cross_Post_Error_Manager_Interfa
     }
 
     /**
+     * テスト用のインスタンスを作成
+     *
+     * @return WP_Cross_Post_Error_Manager
+     */
+    public static function create_for_test() {
+        return new self();
+    }
+
+    /**
      * コンストラクタ
      */
     private function __construct() {
@@ -69,6 +78,11 @@ class WP_Cross_Post_Error_Manager implements WP_Cross_Post_Error_Manager_Interfa
         if (is_wp_error($response)) {
             $error_message = $response->get_error_message();
             $this->debug_manager->log($context . ' エラー: ' . $error_message, 'error', array(
+                'error_code' => $response->get_error_code(),
+                'error_data' => $response->get_error_data()
+            ));
+            $this->notify_error($error_message, 'error', array(
+                'context' => $context,
                 'error_code' => $response->get_error_code(),
                 'error_data' => $response->get_error_data()
             ));
@@ -101,6 +115,11 @@ class WP_Cross_Post_Error_Manager implements WP_Cross_Post_Error_Manager_Interfa
                 'response_code' => $response_code,
                 'response_body' => wp_remote_retrieve_body($response)
             ));
+            $this->notify_error($error_message, 'error', array(
+                'context' => $context,
+                'response_code' => $response_code,
+                'response_body' => wp_remote_retrieve_body($response)
+            ));
             return new WP_Error('api_error', $error_message);
         }
 
@@ -121,6 +140,12 @@ class WP_Cross_Post_Error_Manager implements WP_Cross_Post_Error_Manager_Interfa
             'exception_code' => $e->getCode(),
             'exception_trace' => $e->getTraceAsString()
         ));
+        $this->notify_error($error_message, 'error', array(
+            'context' => $context,
+            'exception_class' => get_class($e),
+            'exception_code' => $e->getCode(),
+            'exception_trace' => $e->getTraceAsString()
+        ));
         return new WP_Error('sync_error', $error_message);
     }
 
@@ -134,6 +159,10 @@ class WP_Cross_Post_Error_Manager implements WP_Cross_Post_Error_Manager_Interfa
     public function handle_validation_error($field, $message) {
         $error_message = sprintf('バリデーションエラー（%s）: %s', $field, $message);
         $this->debug_manager->log($error_message, 'error', array(
+            'field' => $field,
+            'validation_message' => $message
+        ));
+        $this->notify_error($error_message, 'error', array(
             'field' => $field,
             'validation_message' => $message
         ));
@@ -151,6 +180,154 @@ class WP_Cross_Post_Error_Manager implements WP_Cross_Post_Error_Manager_Interfa
         $this->debug_manager->log($message, 'error', array(
             'error_type' => $type
         ));
+        $this->notify_error($message, 'error', array(
+            'error_type' => $type
+        ));
         return new WP_Error($type, $message);
+    }
+
+    /**
+     * 詳細なエラーログ出力
+     *
+     * @param string $message エラーメッセージ
+     * @param string $type エラータイプ
+     * @param array $context コンテキスト情報
+     * @param string $file ファイル名
+     * @param int $line 行番号
+     * @return WP_Error エラーオブジェクト
+     */
+    public function log_detailed_error($message, $type = 'error', $context = array(), $file = '', $line = 0) {
+        // 詳細なコンテキスト情報を追加
+        $detailed_context = array_merge($context, array(
+            'file' => $file,
+            'line' => $line,
+            'backtrace' => debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10)
+        ));
+        
+        // ログレベルに応じた処理
+        switch ($type) {
+            case 'error':
+                $this->debug_manager->log($message, 'error', $detailed_context);
+                $this->notify_error($message, 'error', $detailed_context);
+                break;
+            case 'warning':
+                $this->debug_manager->log($message, 'warning', $detailed_context);
+                $this->notify_error($message, 'warning', $detailed_context);
+                break;
+            case 'notice':
+                $this->debug_manager->log($message, 'notice', $detailed_context);
+                $this->notify_error($message, 'notice', $detailed_context);
+                break;
+            default:
+                $this->debug_manager->log($message, 'error', $detailed_context);
+                $this->notify_error($message, 'error', $detailed_context);
+        }
+        
+        return new WP_Error($type, $message);
+    }
+
+    /**
+     * エラー通知機能
+     *
+     * @param string $message エラーメッセージ
+     * @param string $type エラータイプ
+     * @param array $context コンテキスト情報
+     * @return bool 通知が成功したかどうか
+     */
+    public function notify_error($message, $type = 'error', $context = array()) {
+        // エラー通知の設定を取得
+        $notification_settings = get_option('wp_cross_post_error_notification_settings', array(
+            'enabled' => false,
+            'email' => get_option('admin_email'),
+            'threshold' => 'error'
+        ));
+        
+        // 通知が無効な場合は何もしない
+        if (!$notification_settings['enabled']) {
+            return false;
+        }
+        
+        // ログレベルの閾値をチェック
+        $log_levels = array('debug' => 0, 'info' => 1, 'notice' => 2, 'warning' => 3, 'error' => 4);
+        if ($log_levels[$type] < $log_levels[$notification_settings['threshold']]) {
+            return false;
+        }
+        
+        // 通知メールを送信
+        $subject = sprintf('[WP Cross Post] %s が発生しました', ucfirst($type));
+        $body = sprintf(
+            "WP Cross Post プラグインで %s が発生しました:\n\n%s\n\nコンテキスト情報:\n%s",
+            $type,
+            $message,
+            print_r($context, true)
+        );
+        
+        $result = wp_mail(
+            $notification_settings['email'],
+            $subject,
+            $body,
+            array('Content-Type: text/plain; charset=UTF-8')
+        );
+        
+        if ($result) {
+            $this->debug_manager->log('エラー通知を送信しました', 'info', array(
+                'type' => $type,
+                'recipient' => $notification_settings['email']
+            ));
+        } else {
+            $this->debug_manager->log('エラー通知の送信に失敗しました', 'warning', array(
+                'type' => $type,
+                'recipient' => $notification_settings['email']
+            ));
+        }
+        
+        return $result;
+    }
+    
+    /**
+     * エラー通知設定を更新
+     *
+     * @param array $settings 通知設定
+     * @return bool 更新が成功したかどうか
+     */
+    public function update_notification_settings($settings) {
+        $allowed_settings = array('enabled', 'email', 'threshold');
+        $validated_settings = array();
+        
+        foreach ($allowed_settings as $key) {
+            if (isset($settings[$key])) {
+                switch ($key) {
+                    case 'enabled':
+                        $validated_settings[$key] = (bool) $settings[$key];
+                        break;
+                    case 'email':
+                        $validated_settings[$key] = sanitize_email($settings[$key]);
+                        break;
+                    case 'threshold':
+                        $allowed_thresholds = array('debug', 'info', 'notice', 'warning', 'error');
+                        if (in_array($settings[$key], $allowed_thresholds)) {
+                            $validated_settings[$key] = $settings[$key];
+                        } else {
+                            $validated_settings[$key] = 'error';
+                        }
+                        break;
+                }
+            }
+        }
+        
+        return update_option('wp_cross_post_error_notification_settings', $validated_settings);
+    }
+    
+    /**
+     * エラー通知設定を取得
+     *
+     * @return array 通知設定
+     */
+    public function get_notification_settings() {
+        return get_option('wp_cross_post_error_notification_settings', array(
+            'enabled' => false,
+            'email' => get_option('admin_email'),
+            'threshold' => 'error'
+        ));
     }
 }

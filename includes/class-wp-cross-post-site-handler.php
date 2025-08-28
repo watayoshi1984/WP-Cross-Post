@@ -16,10 +16,26 @@ require_once WP_CROSS_POST_PLUGIN_DIR . 'includes/interfaces/interface-site-hand
  */
 class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface {
 
-    private $debug_manager;
+    // キャッシュキーのプレフィックスを定数として定義
+    const SITE_CACHE_PREFIX = 'wp_cross_post_site_';
+    const TAXONOMY_CACHE_PREFIX = 'wp_cross_post_taxonomies_';
+    
+    // キャッシュの有効期限（秒）
+    const SITE_CACHE_EXPIRY = 30 * MINUTE_IN_SECONDS; // 30分
+    const TAXONOMY_CACHE_EXPIRY = HOUR_IN_SECONDS; // 1時間
 
-    public function __construct() {
-        $this->debug_manager = WP_Cross_Post_Debug_Manager::get_instance();
+    private $debug_manager;
+    private $auth_manager;
+    private $error_manager;
+    private $api_handler;
+    private $rate_limit_manager;
+
+    public function __construct($debug_manager, $auth_manager, $error_manager, $api_handler, $rate_limit_manager) {
+        $this->debug_manager = $debug_manager;
+        $this->auth_manager = $auth_manager;
+        $this->error_manager = $error_manager;
+        $this->api_handler = $api_handler;
+        $this->rate_limit_manager = $rate_limit_manager;
     }
 
     public function add_site($site_data) {
@@ -87,7 +103,7 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
      */
     private function get_site_name($site_data) {
         // WordPress 6.5以降のアプリケーションパスワード対応
-        $auth_header = $this->get_auth_header($site_data);
+        $auth_header = $this->auth_manager->get_auth_header($site_data);
         
         $response = wp_remote_get($site_data['url'] . '/wp-json', array(
             'timeout' => 30,
@@ -102,20 +118,6 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
 
         $data = json_decode(wp_remote_retrieve_body($response), true);
         return isset($data['name']) ? $data['name'] : parse_url($site_data['url'], PHP_URL_HOST);
-    }
-
-    /**
-     * 認証ヘッダーを取得
-     */
-    private function get_auth_header($site_data) {
-        // WordPress 5.6以降のアプリケーションパスワード対応
-        if (version_compare(get_bloginfo('version'), '5.6', '>=')) {
-            // アプリケーションパスワードの形式で認証
-            return 'Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password']);
-        } else {
-            // 従来のBasic認証
-            return 'Basic ' . base64_encode($site_data['username'] . ':' . $site_data['app_password']);
-        }
     }
 
     public function remove_site($site_id) {
@@ -151,7 +153,39 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
     }
 
     public function get_sites() {
-        return get_option('wp_cross_post_sites', array());
+        // 設定からキャッシュの有効/無効を取得
+        $config_manager = WP_Cross_Post_Config_Manager::get_settings();
+        $enable_cache = isset($config_manager['cache_settings']['enable_cache']) ? 
+                        $config_manager['cache_settings']['enable_cache'] : true;
+        
+        if ($enable_cache) {
+            // キャッシュキーの生成
+            $cache_key = self::SITE_CACHE_PREFIX . 'all_sites';
+            
+            // キャッシュからサイトデータを取得
+            $sites = get_transient($cache_key);
+            
+            if ($sites !== false) {
+                $this->debug_manager->log('サイトデータをキャッシュから取得', 'info');
+                return $sites;
+            }
+        }
+        
+        // キャッシュにない場合は、オプションから取得
+        $sites = get_option('wp_cross_post_sites', array());
+        
+        if ($enable_cache) {
+            // サイトデータをキャッシュに保存
+            $cache_duration = isset($config_manager['cache_settings']['cache_duration']) ? 
+                              $config_manager['cache_settings']['cache_duration'] : self::SITE_CACHE_EXPIRY;
+            set_transient($cache_key, $sites, $cache_duration);
+            
+            $this->debug_manager->log('サイトデータをキャッシュに保存', 'info', array(
+                'cache_duration' => $cache_duration
+            ));
+        }
+        
+        return $sites;
     }
 
     private function validate_site_data($site_data) {
@@ -305,17 +339,24 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
      * サイトデータを取得（キャッシュ対応）
      */
     public function get_site_data($site_id) {
-        // キャッシュキーの生成
-        $cache_key = 'wp_cross_post_site_' . $site_id;
+        // 設定からキャッシュの有効/無効を取得
+        $config_manager = WP_Cross_Post_Config_Manager::get_settings();
+        $enable_cache = isset($config_manager['cache_settings']['enable_cache']) ? 
+                        $config_manager['cache_settings']['enable_cache'] : true;
         
-        // キャッシュからサイトデータを取得
-        $site_data = get_transient($cache_key);
-        
-        if ($site_data !== false) {
-            $this->debug_manager->log('サイトデータをキャッシュから取得', 'info', array(
-                'site_id' => $site_id
-            ));
-            return $site_data;
+        if ($enable_cache) {
+            // キャッシュキーの生成
+            $cache_key = self::SITE_CACHE_PREFIX . $site_id;
+            
+            // キャッシュからサイトデータを取得
+            $site_data = get_transient($cache_key);
+            
+            if ($site_data !== false) {
+                $this->debug_manager->log('サイトデータをキャッシュから取得', 'info', array(
+                    'site_id' => $site_id
+                ));
+                return $site_data;
+            }
         }
         
         // キャッシュにない場合は、オプションから取得
@@ -331,12 +372,17 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
             return null;
         }
         
-        // サイトデータをキャッシュに保存（30分間）
-        set_transient($cache_key, $site_data, 30 * MINUTE_IN_SECONDS);
-        
-        $this->debug_manager->log('サイトデータをキャッシュに保存', 'info', array(
-            'site_id' => $site_id
-        ));
+        if ($enable_cache) {
+            // サイトデータをキャッシュに保存
+            $cache_duration = isset($config_manager['cache_settings']['cache_duration']) ? 
+                              $config_manager['cache_settings']['cache_duration'] : self::SITE_CACHE_EXPIRY;
+            set_transient($cache_key, $site_data, $cache_duration);
+            
+            $this->debug_manager->log('サイトデータをキャッシュに保存', 'info', array(
+                'site_id' => $site_id,
+                'cache_duration' => $cache_duration
+            ));
+        }
         
         return $site_data;
     }
@@ -345,7 +391,7 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
      * サイトデータのキャッシュをクリア
      */
     public function clear_site_cache($site_id) {
-        $cache_key = 'wp_cross_post_site_' . $site_id;
+        $cache_key = self::SITE_CACHE_PREFIX . $site_id;
         delete_transient($cache_key);
         
         $this->debug_manager->log('サイトデータのキャッシュをクリア', 'info', array(
@@ -362,6 +408,10 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
             $this->clear_site_cache($site['id']);
         }
         
+        // すべてのサイトデータのキャッシュもクリア
+        $cache_key = self::SITE_CACHE_PREFIX . 'all_sites';
+        delete_transient($cache_key);
+        
         $this->debug_manager->log('すべてのサイトデータのキャッシュをクリア', 'info');
     }
 
@@ -369,17 +419,24 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
      * タクソノミー情報を取得（キャッシュ対応）
      */
     public function get_cached_taxonomies($site_id) {
-        // キャッシュキーの生成
-        $cache_key = 'wp_cross_post_taxonomies_' . $site_id;
+        // 設定からキャッシュの有効/無効を取得
+        $config_manager = WP_Cross_Post_Config_Manager::get_settings();
+        $enable_cache = isset($config_manager['cache_settings']['enable_cache']) ? 
+                        $config_manager['cache_settings']['enable_cache'] : true;
         
-        // キャッシュからタクソノミー情報を取得
-        $taxonomies = get_transient($cache_key);
-        
-        if ($taxonomies !== false) {
-            $this->debug_manager->log('タクソノミー情報をキャッシュから取得', 'info', array(
-                'site_id' => $site_id
-            ));
-            return $taxonomies;
+        if ($enable_cache) {
+            // キャッシュキーの生成
+            $cache_key = self::TAXONOMY_CACHE_PREFIX . $site_id;
+            
+            // キャッシュからタクソノミー情報を取得
+            $taxonomies = get_transient($cache_key);
+            
+            if ($taxonomies !== false) {
+                $this->debug_manager->log('タクソノミー情報をキャッシュから取得', 'info', array(
+                    'site_id' => $site_id
+                ));
+                return $taxonomies;
+            }
         }
         
         // キャッシュにない場合は、APIから取得
@@ -394,12 +451,17 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
             return $taxonomies;
         }
         
-        // タクソノミー情報をキャッシュに保存（1時間）
-        set_transient($cache_key, $taxonomies, HOUR_IN_SECONDS);
-        
-        $this->debug_manager->log('タクソノミー情報をキャッシュに保存', 'info', array(
-            'site_id' => $site_id
-        ));
+        if ($enable_cache) {
+            // タクソノミー情報をキャッシュに保存
+            $cache_duration = isset($config_manager['cache_settings']['cache_duration']) ? 
+                              $config_manager['cache_settings']['cache_duration'] : self::TAXONOMY_CACHE_EXPIRY;
+            set_transient($cache_key, $taxonomies, $cache_duration);
+            
+            $this->debug_manager->log('タクソノミー情報をキャッシュに保存', 'info', array(
+                'site_id' => $site_id,
+                'cache_duration' => $cache_duration
+            ));
+        }
         
         return $taxonomies;
     }
@@ -469,7 +531,7 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
      * タクソノミー情報のキャッシュをクリア
      */
     public function clear_taxonomies_cache($site_id) {
-        $cache_key = 'wp_cross_post_taxonomies_' . $site_id;
+        $cache_key = self::TAXONOMY_CACHE_PREFIX . $site_id;
         delete_transient($cache_key);
         
         $this->debug_manager->log('タクソノミー情報のキャッシュをクリア', 'info', array(
@@ -493,47 +555,94 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
      * 全サイトのタクソノミーを同期
      */
     public function sync_all_sites_taxonomies() {
+        $this->debug_manager->log('全サイトのタクソノミー同期を開始', 'info');
+        
         $sites = get_option('wp_cross_post_sites', array());
         $results = array(
             'success_sites' => array(),
             'failed_sites' => array()
         );
+        
+        // 同期処理のパフォーマンスを監視
+        $this->debug_manager->start_performance_monitoring('sync_all_sites_taxonomies');
 
         foreach ($sites as $site) {
             try {
+                $this->debug_manager->log('サイトのタクソノミー同期を開始', 'info', array(
+                    'site_id' => $site['id'],
+                    'site_name' => $site['name']
+                ));
+                
                 // サイトへの接続テスト
                 $api_handler = new WP_Cross_Post_API_Handler();
                 $test_result = $api_handler->test_connection($site);
                 if (is_wp_error($test_result)) {
-                    throw new Exception($test_result->get_error_message());
+                    throw new Exception('接続テストに失敗: ' . $test_result->get_error_message());
                 }
 
                 // カテゴリーとタグの取得
                 $taxonomies = $this->get_remote_taxonomies($site);
                 if (is_wp_error($taxonomies)) {
-                    throw new Exception($taxonomies->get_error_message());
+                    throw new Exception('タクソノミー情報の取得に失敗: ' . $taxonomies->get_error_message());
                 }
 
                 // カテゴリーの同期
+                $category_count = 0;
                 if (!empty($taxonomies['categories'])) {
                     foreach ($taxonomies['categories'] as $category) {
-                        $this->import_taxonomy_term($category, 'category', $site['name']);
+                        $import_result = $this->import_taxonomy_term($category, 'category', $site['name']);
+                        if (!is_wp_error($import_result)) {
+                            $category_count++;
+                        } else {
+                            $this->debug_manager->log('カテゴリーの同期に失敗', 'warning', array(
+                                'site_id' => $site['id'],
+                                'site_name' => $site['name'],
+                                'term_name' => $category['name'],
+                                'error' => $import_result->get_error_message()
+                            ));
+                        }
                     }
                 }
 
                 // タグの同期
+                $tag_count = 0;
                 if (!empty($taxonomies['tags'])) {
                     foreach ($taxonomies['tags'] as $tag) {
-                        $this->import_taxonomy_term($tag, 'post_tag', $site['name']);
+                        $import_result = $this->import_taxonomy_term($tag, 'post_tag', $site['name']);
+                        if (!is_wp_error($import_result)) {
+                            $tag_count++;
+                        } else {
+                            $this->debug_manager->log('タグの同期に失敗', 'warning', array(
+                                'site_id' => $site['id'],
+                                'site_name' => $site['name'],
+                                'term_name' => $tag['name'],
+                                'error' => $import_result->get_error_message()
+                            ));
+                        }
                     }
                 }
 
                 $results['success_sites'][] = array(
                     'site_id' => $site['id'],
-                    'name' => $site['name']
+                    'name' => $site['name'],
+                    'category_count' => $category_count,
+                    'tag_count' => $tag_count
                 );
+                
+                $this->debug_manager->log('サイトのタクソノミー同期を完了', 'info', array(
+                    'site_id' => $site['id'],
+                    'site_name' => $site['name'],
+                    'category_count' => $category_count,
+                    'tag_count' => $tag_count
+                ));
 
             } catch (Exception $e) {
+                $this->debug_manager->log('サイトのタクソノミー同期でエラー', 'error', array(
+                    'site_id' => $site['id'],
+                    'site_name' => $site['name'],
+                    'error' => $e->getMessage()
+                ));
+                
                 $results['failed_sites'][] = array(
                     'site_id' => $site['id'],
                     'name' => $site['name'],
@@ -541,6 +650,14 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
                 );
             }
         }
+        
+        // 同期処理のパフォーマンスを監視終了
+        $this->debug_manager->end_performance_monitoring('sync_all_sites_taxonomies');
+        
+        $this->debug_manager->log('全サイトのタクソノミー同期を完了', 'info', array(
+            'success_count' => count($results['success_sites']),
+            'failed_count' => count($results['failed_sites'])
+        ));
 
         return $results;
     }
@@ -575,9 +692,9 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
         }
 
         try {
-            $this->debug_manager->start_performance_monitoring('sync_taxonomies');
+            $this->debug_manager->start_performance_monitoring('ajax_sync_taxonomies');
             $result = $this->sync_all_sites_taxonomies();
-            $this->debug_manager->end_performance_monitoring('sync_taxonomies');
+            $this->debug_manager->end_performance_monitoring('ajax_sync_taxonomies');
 
             if (is_wp_error($result)) {
                 throw new Exception($result->get_error_message());
@@ -585,6 +702,10 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
 
             update_option('wp_cross_post_last_sync_time', current_time('mysql'));
             $this->debug_manager->log('wp_cross_post_last_sync_time updated', 'debug');
+            
+            // 詳細な同期結果をログに出力
+            $this->debug_manager->log('タクソノミー同期結果', 'info', $result);
+            
             wp_send_json_success(array(
                 'message' => 'カテゴリーとタグの同期が完了しました。',
                 'type' => 'success',
@@ -669,5 +790,80 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
                 'type' => 'success'
             ));
         }
+    }
+    
+    /**
+     * リモートのタクソノミー情報を取得
+     */
+    private function get_remote_taxonomies($site) {
+        // 設定からキャッシュの有効/無効を取得
+        $config_manager = WP_Cross_Post_Config_Manager::get_settings();
+        $enable_cache = isset($config_manager['cache_settings']['enable_cache']) ? 
+                        $config_manager['cache_settings']['enable_cache'] : true;
+        
+        if ($enable_cache) {
+            // キャッシュキーの生成
+            $cache_key = self::TAXONOMY_CACHE_PREFIX . $site['id'];
+            
+            // キャッシュからタクソノミー情報を取得
+            $taxonomies = get_transient($cache_key);
+            
+            if ($taxonomies !== false) {
+                $this->debug_manager->log('タクソノミー情報をキャッシュから取得', 'info', array(
+                    'site_id' => $site['id']
+                ));
+                return $taxonomies;
+            }
+        }
+        
+        // WordPress 6.5以降のアプリケーションパスワード対応
+        $auth_header = $this->auth_manager->get_auth_header($site);
+        
+        // カテゴリー情報の取得
+        $categories_response = wp_remote_get($site['url'] . '/wp-json/wp/v2/categories?per_page=100', array(
+            'timeout' => 30,
+            'headers' => array(
+                'Authorization' => $auth_header
+            )
+        ));
+        
+        if (is_wp_error($categories_response)) {
+            return $categories_response;
+        }
+        
+        $categories = json_decode(wp_remote_retrieve_body($categories_response), true);
+        
+        // タグ情報の取得
+        $tags_response = wp_remote_get($site['url'] . '/wp-json/wp/v2/tags?per_page=100', array(
+            'timeout' => 30,
+            'headers' => array(
+                'Authorization' => $auth_header
+            )
+        ));
+        
+        if (is_wp_error($tags_response)) {
+            return $tags_response;
+        }
+        
+        $tags = json_decode(wp_remote_retrieve_body($tags_response), true);
+        
+        $taxonomies = array(
+            'categories' => $categories,
+            'tags' => $tags
+        );
+        
+        if ($enable_cache) {
+            // タクソノミー情報をキャッシュに保存
+            $cache_duration = isset($config_manager['cache_settings']['cache_duration']) ? 
+                              $config_manager['cache_settings']['cache_duration'] : self::TAXONOMY_CACHE_EXPIRY;
+            set_transient($cache_key, $taxonomies, $cache_duration);
+            
+            $this->debug_manager->log('タクソノミー情報をキャッシュに保存', 'info', array(
+                'site_id' => $site['id'],
+                'cache_duration' => $cache_duration
+            ));
+        }
+        
+        return $taxonomies;
     }
 }

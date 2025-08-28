@@ -47,4 +47,26 @@ interface WP_Cross_Post_Error_Manager_Interface extends WP_Cross_Post_Manager_In
      * @return WP_Error エラーオブジェクト
      */
     public function handle_general_error($message, $type = 'general_error');
+    
+    /**
+     * 詳細なエラーログ出力
+     *
+     * @param string $message エラーメッセージ
+     * @param string $type エラータイプ
+     * @param array $context コンテキスト情報
+     * @param string $file ファイル名
+     * @param int $line 行番号
+     * @return WP_Error エラーオブジェクト
+     */
+    public function log_detailed_error($message, $type = 'error', $context = array(), $file = '', $line = 0);
+    
+    /**
+     * エラー通知機能
+     *
+     * @param string $message エラーメッセージ
+     * @param string $type エラータイプ
+     * @param array $context コンテキスト情報
+     * @return bool 通知が成功したかどうか
+     */
+    public function notify_error($message, $type = 'error', $context = array());
 }

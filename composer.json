@@ -1,0 +1,39 @@
+{
+    "name": "watayoshi/wp-cross-post",
+    "description": "WordPress plugin for cross-posting between multiple WordPress sites",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "watayoshi",
+            "email": "watayoshi@example.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.5",
+        "wp-phpunit/wp-phpunit": "^6.5",
+        "yoast/phpunit-polyfills": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "WP_Cross_Post\\": "includes/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "WP_Cross_Post\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "test-coverage": "phpunit --coverage-html coverage"
+    },
+    "config": {
+        "platform": {
+            "php": "7.4"
+        }
+    }
+}
