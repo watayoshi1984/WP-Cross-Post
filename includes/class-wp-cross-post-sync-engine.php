@@ -52,6 +52,11 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
      * @return array|WP_Error 同期結果
      */
     public function sync_post($post_id, $selected_sites = array()) {
+        // selected_sitesが文字列の場合、配列に変換する
+        if (!is_array($selected_sites)) {
+            $selected_sites = array($selected_sites);
+        }
+        
         $this->debug_manager->log('投稿同期を開始', 'info', array(
             'post_id' => $post_id,
             'selected_site_count' => count($selected_sites)
@@ -78,11 +83,12 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
             $async_sync = isset($config_manager['sync_settings']['async_sync']) ? 
                           $config_manager['sync_settings']['async_sync'] : false;
             
+            // グローバル設定がtrueの場合のみ非同期処理を実行
             if ($async_sync) {
                 // 非同期処理で同期
                 return $this->sync_post_async($post_id, $selected_sites);
             } else {
-                // 同期処理で同期
+                // 同期処理で同期（デフォルト）
                 return $this->sync_post_sync($post_id, $selected_sites);
             }
 
@@ -102,6 +108,11 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
      * 同期処理で投稿を同期
      */
     private function sync_post_sync($post_id, $selected_sites) {
+        // selected_sitesが文字列の場合、配列に変換する
+        if (!is_array($selected_sites)) {
+            $selected_sites = array($selected_sites);
+        }
+        
         $this->debug_manager->log('同期処理で投稿同期を開始', 'info', array(
             'post_id' => $post_id,
             'selected_site_count' => count($selected_sites)
@@ -163,7 +174,7 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
     private function sync_post_async($post_id, $selected_sites) {
         $this->debug_manager->log('非同期処理で投稿同期を開始', 'info', array(
             'post_id' => $post_id,
-            'selected_site_count' => count($selected_sites)
+            'selected_site_count' => is_array($selected_sites) ? count($selected_sites) : 0
         ));
         
         // 非同期処理用のポストを作成
@@ -206,7 +217,7 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
         
         foreach ($sites as $site) {
             // 選択されたサイトのみ処理する
-            if (!empty($selected_sites) && !in_array($site['id'], $selected_sites)) {
+            if (!empty($selected_sites) && is_array($selected_sites) && !in_array($site['id'], $selected_sites)) {
                 continue;
             }
             
@@ -249,7 +260,15 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
             }
             
             // レート制限を考慮した投稿の同期
-            $remote_post_id = $this->rate_limit_manager->sync_with_rate_limit($site, $post_data);
+            // $remote_post_id = $this->rate_limit_manager->sync_with_rate_limit($site, $post_data);
+            $remote_post_id = $this->api_handler->sync_post($site, $post_data);
+            
+            // レート制限エラーの処理
+            if (is_wp_error($remote_post_id) && $remote_post_id->get_error_code() === 'rate_limit') {
+                $this->rate_limit_manager->handle_rate_limit($site['url'], $remote_post_id);
+                // 再試行ロジックをここに実装するか、またはエラーをそのまま返す
+                // ここではエラーをそのまま返す
+            }
             
             if (is_wp_error($remote_post_id)) {
                 $results[$site['id']] = $remote_post_id;
@@ -274,7 +293,7 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
         // リクエストの準備
         foreach ($sites as $site) {
             // 選択されたサイトのみ処理する
-            if (!empty($selected_sites) && !in_array($site['id'], $selected_sites)) {
+            if (!empty($selected_sites) && is_array($selected_sites) && !in_array($site['id'], $selected_sites)) {
                 continue;
             }
             
@@ -683,6 +702,11 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
             'post_id' => $post_id
         ));
         
+        // selected_sitesが文字列の場合、配列に変換する
+        if (!is_array($selected_sites)) {
+            $selected_sites = array($selected_sites);
+        }
+        
         // 同期処理を実行
         $result = $this->sync_post_sync($post_id, $selected_sites);
         
@@ -706,11 +730,13 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
                     'value' => $post_id,
                 )
             ),
-            'posts_per_page' => 1,
+            'posts_per_page' => -1, // すべてのタスクを取得
         ));
         
         if (!empty($tasks)) {
-            wp_delete_post($tasks[0]->ID, true);
+            foreach ($tasks as $task) {
+                wp_delete_post($task->ID, true);
+            }
         }
         
         return $result;
