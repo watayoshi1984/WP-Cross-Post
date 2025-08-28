@@ -13,7 +13,8 @@ function wp_cross_post_add_site() {
         'app_password' => sanitize_text_field($_POST['app_password']),
     );
 
-    $site_handler = new WP_Cross_Post_Site_Handler();
+    global $wp_cross_post;
+    $site_handler = $wp_cross_post->site_handler;
     $result = $site_handler->add_site($site_data);
 
     if (is_wp_error($result)) {
@@ -33,7 +34,8 @@ function wp_cross_post_remove_site() {
 
     $site_id = sanitize_text_field($_POST['site_id']);
 
-    $site_handler = new WP_Cross_Post_Site_Handler();
+    global $wp_cross_post;
+    $site_handler = $wp_cross_post->site_handler;
     $result = $site_handler->remove_site($site_id);
 
     if (is_wp_error($result)) {
@@ -51,7 +53,8 @@ function wp_cross_post_sync_taxonomies() {
         wp_send_json_error('権限がありません。');
     }
 
-    $site_handler = new WP_Cross_Post_Site_Handler();
+    global $wp_cross_post;
+    $site_handler = $wp_cross_post->site_handler;
     $result = $site_handler->sync_all_sites_taxonomies();
 
     if (is_wp_error($result)) {
@@ -77,8 +80,9 @@ function wp_cross_post_sync_single_site() {
     $site_id = sanitize_text_field($_POST['site_id']);
 
     // 同期ハンドラーのインスタンス化
-    $api_handler = new WP_Cross_Post_API_Handler();
-    $sync_handler = new WP_Cross_Post_Sync_Handler($api_handler);
+    global $wp_cross_post;
+    $api_handler = $wp_cross_post->api_handler;
+    $sync_handler = $wp_cross_post->sync_handler;
     
     // 単一サイトへの同期を実行
     $result = $sync_handler->sync_to_single_site($post_id, $site_id);

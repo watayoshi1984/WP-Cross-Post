@@ -574,8 +574,7 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
                 ));
                 
                 // サイトへの接続テスト
-                $api_handler = new WP_Cross_Post_API_Handler();
-                $test_result = $api_handler->test_connection($site);
+                $test_result = $this->api_handler->test_connection($site);
                 if (is_wp_error($test_result)) {
                     throw new Exception('接続テストに失敗: ' . $test_result->get_error_message());
                 }

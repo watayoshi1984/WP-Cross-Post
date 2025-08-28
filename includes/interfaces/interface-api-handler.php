@@ -10,7 +10,7 @@
  *
  * APIハンドラーが実装すべきインターフェース
  */
-interface WP_Cross_Post_API_Handler_Interface extends WP_Cross_Post_Handler_Interface {
+interface WP_Cross_Post_API_Handler_Interface {
     
     /**
      * サイトへの接続テスト

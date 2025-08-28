@@ -58,8 +58,16 @@ if (!defined('ABSPATH')) {
             </div>
             <div class="card-content">
                 <?php
-                $site_handler = new WP_Cross_Post_Site_Handler();
-                $sites = $site_handler->get_sites();
+                // WP_Cross_Post_Site_Handler クラスのインスタンスを取得
+                global $wp_cross_post;
+                if ($wp_cross_post && isset($wp_cross_post->site_handler)) {
+                    $site_handler = $wp_cross_post->site_handler;
+                    $sites = $site_handler->get_sites();
+                } else {
+                    // $wp_cross_post が null または site_handler が存在しない場合のエラーハンドリング
+                    $sites = array();
+                    echo '<div class="notice notice-error"><p>WP Cross Post プラグインが正しく初期化されていません。</p></div>';
+                }
                 if (!empty($sites)) :
                 ?>
                     <table class="wp-list-table widefat fixed striped">
@@ -250,4 +258,3 @@ if (!defined('ABSPATH')) {
     100% { transform: rotate(360deg); }
 }
 </style>
-

@@ -1,3 +1,4 @@
+<?php
 <div class="wrap wp-cross-post-wrapper">
     <div class="wp-cross-post-header">
         <h1><i class="material-icons">share</i> WP Cross Post</h1>

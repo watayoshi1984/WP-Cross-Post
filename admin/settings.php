@@ -42,6 +42,56 @@ if ($_POST && isset($_POST['wp_cross_post_settings_nonce'])) {
     }
 }
 
+// サイトが追加された場合の処理
+if ($_POST && isset($_POST['wp_cross_post_add_site_nonce'])) {
+    if (wp_verify_nonce($_POST['wp_cross_post_add_site_nonce'], 'wp_cross_post_add_site')) {
+        $site_data = array(
+            'name' => sanitize_text_field($_POST['site_name']),
+            'url' => esc_url_raw($_POST['site_url']),
+            'username' => sanitize_text_field($_POST['username']),
+            'app_password' => sanitize_text_field($_POST['app_password'])
+        );
+        
+        $site_handler = new WP_Cross_Post_Site_Handler();
+        $result = $site_handler->add_site($site_data);
+        
+        if (!is_wp_error($result)) {
+            // サイト追加成功メッセージ
+            add_action('admin_notices', function() {
+                echo '<div class="notice notice-success is-dismissible"><p>サイトを追加しました。</p></div>';
+            });
+        } else {
+            // サイト追加失敗メッセージ
+            add_action('admin_notices', function() use ($result) {
+                echo '<div class="notice notice-error is-dismissible"><p>' . esc_html($result->get_error_message()) . '</p></div>';
+            });
+        }
+    }
+}
+
+// サイトが削除された場合の処理
+if ($_POST && isset($_POST['wp_cross_post_remove_site_nonce'])) {
+    if (wp_verify_nonce($_POST['wp_cross_post_remove_site_nonce'], 'wp_cross_post_remove_site')) {
+        $site_id = sanitize_text_field($_POST['site_id']);
+        
+        global $wp_cross_post;
+        $site_handler = $wp_cross_post->site_handler;
+        $result = $site_handler->remove_site($site_id);
+        
+        if ($result) {
+            // サイト削除成功メッセージ
+            add_action('admin_notices', function() {
+                echo '<div class="notice notice-success is-dismissible"><p>サイトを削除しました。</p></div>';
+            });
+        } else {
+            // サイト削除失敗メッセージ
+            add_action('admin_notices', function() {
+                echo '<div class="notice notice-error is-dismissible"><p>サイトの削除に失敗しました。</p></div>';
+            });
+        }
+    }
+}
+
 // エラー通知設定が保存された場合の処理
 if ($_POST && isset($_POST['wp_cross_post_notification_settings_nonce'])) {
     if (wp_verify_nonce($_POST['wp_cross_post_notification_settings_nonce'], 'wp_cross_post_save_notification_settings')) {
@@ -66,6 +116,7 @@ if ($_POST && isset($_POST['wp_cross_post_notification_settings_nonce'])) {
 $settings = WP_Cross_Post_Config_Manager::get_settings();
 $error_manager = WP_Cross_Post_Error_Manager::get_instance();
 $notification_settings = $error_manager->get_notification_settings();
+$sites = get_option('wp_cross_post_sites', array());
 ?>
 
 <div class="wrap wp-cross-post-container">
@@ -210,13 +261,13 @@ $notification_settings = $error_manager->get_notification_settings();
                             <input type="checkbox" name="cache_enable" <?php checked($settings['cache_settings']['enable_cache']); ?> />
                             キャッシュを有効にする
                         </label>
-                        <p class="description">サイト情報やタクソノミー情報をキャッシュします</p>
+                        <p class="description">APIリクエストの結果をキャッシュします</p>
                     </td>
                 </tr>
                 <tr>
                     <th scope="row">キャッシュ期間</th>
                     <td>
-                        <input type="number" name="cache_duration" value="<?php echo esc_attr($settings['cache_settings']['cache_duration']); ?>" min="60" max="86400" />
+                        <input type="number" name="cache_duration" value="<?php echo esc_attr($settings['cache_settings']['cache_duration']); ?>" min="1" max="86400" />
                         <p class="description">キャッシュの有効期間（秒）</p>
                     </td>
                 </tr>
@@ -238,7 +289,7 @@ $notification_settings = $error_manager->get_notification_settings();
                     </td>
                 </tr>
                 <tr>
-                    <th scope="row">資格情報の暗号化</th>
+                    <th scope="row">認証情報の暗号化</th>
                     <td>
                         <label>
                             <input type="checkbox" name="security_encrypt_credentials" <?php checked($settings['security_settings']['encrypt_credentials']); ?> />
@@ -250,160 +301,177 @@ $notification_settings = $error_manager->get_notification_settings();
             </table>
         </div>
         
+        <!-- サイト管理 -->
+        <div class="wp-cross-post-card">
+            <h2>サイト管理</h2>
+            
+            <!-- サイトの追加 -->
+            <div class="card-content">
+                <form id="wp-cross-post-add-site-form" method="post" action="">
+                    <?php wp_nonce_field('wp_cross_post_add_site', 'wp_cross_post_add_site_nonce'); ?>
+                    <div class="form-group">
+                        <label for="site_name">サイト名</label>
+                        <input type="text" id="site_name" name="site_name" class="regular-text" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="site_url">サイトURL</label>
+                        <input type="url" id="site_url" name="site_url" class="regular-text" required>
+                        <p class="description">例: https://example.com</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="username">ユーザー名</label>
+                        <input type="text" id="username" name="username" class="regular-text" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="app_password">アプリケーションパスワード</label>
+                        <input type="password" id="app_password" name="app_password" class="regular-text" required>
+                        <p class="description">WordPressの「アプリケーションパスワード」機能で発行したパスワードを入力してください。</p>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="button button-primary">
+                            <i class="material-icons">add</i>
+                            サイトを追加
+                        </button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- 登録済みサイト -->
+            <div class="card-content">
+                <h3>登録済みサイト</h3>
+                <?php if (!empty($sites)) : ?>
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th>サイト名</th>
+                                <th>URL</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($sites as $site) : ?>
+                            <tr>
+                                <td><?php echo esc_html($site['name']); ?></td>
+                                <td>
+                                    <a href="<?php echo esc_url($site['url']); ?>" target="_blank">
+                                        <?php echo esc_url($site['url']); ?>
+                                        <i class="material-icons">open_in_new</i>
+                                    </a>
+                                </td>
+                                <td>
+                                    <form method="post" action="" style="display: inline;">
+                                        <?php wp_nonce_field('wp_cross_post_remove_site', 'wp_cross_post_remove_site_nonce'); ?>
+                                        <input type="hidden" name="site_id" value="<?php echo esc_attr($site['id']); ?>">
+                                        <button type="submit" class="button button-link-delete">
+                                            <i class="material-icons">delete</i>
+                                            削除
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php else : ?>
+                    <p>登録済みのサイトはありません。</p>
+                <?php endif; ?>
+            </div>
+        </div>
+        
         <!-- エラー通知設定 -->
         <div class="wp-cross-post-card">
             <h2>エラー通知設定</h2>
-            <form method="post" action="">
-                <?php wp_nonce_field('wp_cross_post_save_notification_settings', 'wp_cross_post_notification_settings_nonce'); ?>
-                <table class="form-table">
-                    <tr>
-                        <th scope="row">通知有効化</th>
-                        <td>
-                            <label>
-                                <input type="checkbox" name="notification_enabled" <?php checked($notification_settings['enabled']); ?> />
-                                エラー通知を有効にする
-                            </label>
-                            <p class="description">エラーが発生した際に通知メールを送信します</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">通知先メールアドレス</th>
-                        <td>
-                            <input type="email" name="notification_email" value="<?php echo esc_attr($notification_settings['email']); ?>" />
-                            <p class="description">エラー通知を送信するメールアドレス</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">通知閾値</th>
-                        <td>
-                            <select name="notification_threshold">
-                                <option value="debug" <?php selected($notification_settings['threshold'], 'debug'); ?>>Debug</option>
-                                <option value="info" <?php selected($notification_settings['threshold'], 'info'); ?>>Info</option>
-                                <option value="notice" <?php selected($notification_settings['threshold'], 'notice'); ?>>Notice</option>
-                                <option value="warning" <?php selected($notification_settings['threshold'], 'warning'); ?>>Warning</option>
-                                <option value="error" <?php selected($notification_settings['threshold'], 'error'); ?>>Error</option>
-                            </select>
-                            <p class="description">このレベル以上のエラーを通知します</p>
-                        </td>
-                    </tr>
-                </table>
-                <?php submit_button('エラー通知設定を保存'); ?>
-            </form>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">通知有効化</th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="notification_enabled" <?php checked($notification_settings['enabled']); ?> />
+                            エラー通知を有効にする
+                        </label>
+                        <p class="description">エラー発生時に通知を送信します</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">通知先メールアドレス</th>
+                    <td>
+                        <input type="email" name="notification_email" value="<?php echo esc_attr($notification_settings['email']); ?>" class="regular-text" />
+                        <p class="description">エラー通知を送信するメールアドレス</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">通知閾値</th>
+                    <td>
+                        <select name="notification_threshold">
+                            <option value="error" <?php selected($notification_settings['threshold'], 'error'); ?>>Error</option>
+                            <option value="warning" <?php selected($notification_settings['threshold'], 'warning'); ?>>Warning</option>
+                            <option value="info" <?php selected($notification_settings['threshold'], 'info'); ?>>Info</option>
+                        </select>
+                        <p class="description">通知を送信するエラーの重要度</p>
+                    </td>
+                </tr>
+            </table>
         </div>
         
         <?php submit_button('設定を保存'); ?>
     </form>
-    
-    <div class="wp-cross-post-card">
-        <h2>設定のインポート/エクスポート</h2>
-        <table class="form-table">
-            <tr>
-                <th scope="row">設定のエクスポート</th>
-                <td>
-                    <button type="button" class="button" id="export-settings">設定をエクスポート</button>
-                    <p class="description">現在の設定をファイルにエクスポートします</p>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">設定のインポート</th>
-                <td>
-                    <input type="file" id="import-settings-file" accept=".json" />
-                    <button type="button" class="button" id="import-settings">設定をインポート</button>
-                    <p class="description">エクスポートした設定ファイルをインポートします</p>
-                </td>
-            </tr>
-        </table>
-    </div>
-    
-    <div class="wp-cross-post-card">
-        <h2>プラグイン情報</h2>
-        <p>WP Cross Postは、複数のWordPressサイト間でクロス投稿を行うプラグインです。</p>
-        <p>バージョン: <?php echo WP_CROSS_POST_VERSION; ?></p>
-    </div>
-
-    <div class="wp-cross-post-card">
-        <h2>使い方</h2>
-        <ol>
-            <li>「サイト管理」ページで同期先のサイトを追加します。</li>
-            <li>投稿画面で同期先のサイトを選択し、「同期」ボタンをクリックします。</li>
-            <li>選択したサイトに投稿が同期されます。</li>
-        </ol>
-    </div>
-
-    <div class="wp-cross-post-card">
-        <h2>トラブルシューティング</h2>
-        <p>問題が発生した場合は、以下の手順を試してください：</p>
-        <ol>
-            <li>サイトの接続設定を確認してください。</li>
-            <li>WordPressとプラグインが最新バージョンであることを確認してください。</li>
-            <li>エラーログを確認してください。</li>
-        </ol>
-        <p>それでも問題が解決しない場合は、サポートにお問い合わせください。</p>
-    </div>
 </div>
 
-<script>
-jQuery(document).ready(function($) {
-    // 設定のエクスポート
-    $('#export-settings').on('click', function() {
-        $.ajax({
-            url: ajaxurl,
-            type: 'POST',
-            data: {
-                action: 'wp_cross_post_export_settings',
-                nonce: '<?php echo wp_create_nonce('wp_cross_post_export_settings'); ?>'
-            },
-            success: function(response) {
-                if (response.success) {
-                    // ダウンロードリンクを作成
-                    var element = document.createElement('a');
-                    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(response.data));
-                    element.setAttribute('download', 'wp-cross-post-settings.json');
-                    element.style.display = 'none';
-                    document.body.appendChild(element);
-                    element.click();
-                    document.body.removeChild(element);
-                } else {
-                    alert('設定のエクスポートに失敗しました。');
-                }
-            }
-        });
-    });
-    
-    // 設定のインポート
-    $('#import-settings').on('click', function() {
-        var fileInput = $('#import-settings-file')[0];
-        if (fileInput.files.length === 0) {
-            alert('インポートするファイルを選択してください。');
-            return;
-        }
-        
-        var file = fileInput.files[0];
-        var reader = new FileReader();
-        
-        reader.onload = function(e) {
-            var settings = e.target.result;
-            
-            $.ajax({
-                url: ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'wp_cross_post_import_settings',
-                    nonce: '<?php echo wp_create_nonce('wp_cross_post_import_settings'); ?>',
-                    settings: settings
-                },
-                success: function(response) {
-                    if (response.success) {
-                        alert('設定をインポートしました。');
-                        location.reload();
-                    } else {
-                        alert('設定のインポートに失敗しました。');
-                    }
-                }
-            });
-        };
-        
-        reader.readAsText(file);
-    });
-});
-</script>
+<style>
+.wp-cross-post-container {
+    max-width: 1200px;
+    margin: 20px auto;
+}
+
+.wp-cross-post-title {
+    font-size: 24px;
+    margin-bottom: 20px;
+}
+
+.wp-cross-post-card {
+    background: #fff;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+    padding: 20px;
+}
+
+.wp-cross-post-card h2 {
+    margin-top: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.form-group .regular-text {
+    width: 100%;
+    max-width: 400px;
+}
+
+.form-group .description {
+    margin-top: 5px;
+    color: #666;
+    font-size: 13px;
+}
+
+.form-actions {
+    margin-top: 20px;
+}
+
+.card-content {
+    margin-top: 20px;
+}
+
+.card-content h3 {
+    margin-top: 0;
+}
+</style>

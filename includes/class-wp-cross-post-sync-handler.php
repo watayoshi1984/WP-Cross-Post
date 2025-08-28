@@ -1,3 +1,4 @@
+<?php
 /**
  * WP Cross Post 同期ハンドラー
  *
@@ -407,8 +408,14 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
             }
         }
         
-        // レート制限を考慮した投稿の同期
-        $remote_post_id = $this->rate_limit_manager->sync_with_rate_limit($site_data, $post_data);
+        // レート制限のチェックと待機
+        $rate_limit_result = $this->rate_limit_manager->check_and_wait_for_rate_limit($site_data['url']);
+        if (is_wp_error($rate_limit_result)) {
+            return $rate_limit_result;
+        }
+        
+        // 投稿の同期
+        $remote_post_id = $this->api_handler->create_or_update_post($site_data, $post_data);
         
         if (!is_wp_error($remote_post_id)) {
             $this->site_handler->save_sync_info($post_id, $site_id, $remote_post_id);
