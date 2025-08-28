@@ -52,6 +52,14 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         $parallel_sync = isset($_POST['parallel_sync']) ? (bool) $_POST['parallel_sync'] : false;
         $async_sync = isset($_POST['async_sync']) ? (bool) $_POST['async_sync'] : false;
 
+        // 設定から非同期処理の有効/無効を取得
+        $config_manager = WP_Cross_Post_Config_Manager::get_settings();
+        $global_async_sync = isset($config_manager['sync_settings']['async_sync']) ? 
+                             $config_manager['sync_settings']['async_sync'] : false;
+        
+        // グローバル設定とユーザー選択の両方がtrueの場合のみ非同期処理を実行
+        $async_sync = $async_sync && $global_async_sync;
+
         if ($async_sync) {
             $this->debug_manager->log('非同期投稿同期を開始', 'info', array(
                 'post_id' => $post_id,
@@ -476,9 +484,9 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         }
 
         $results = array();
-        $async_requests = array();
+        $scheduled_tasks = array();
         
-        // 各サイトへの非同期リクエストを準備
+        // 各サイトに対して個別に非同期処理をスケジュール
         foreach($selected_sites as $site_id) {
             $site_data = $this->site_handler->get_site_data($site_id);
             if (!$site_data) {
@@ -489,38 +497,32 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
                 continue;
             }
 
-            // 非同期リクエストを準備
-            $async_requests[$site_id] = array(
-                'url' => admin_url('admin-ajax.php'),
-                'args' => array(
-                    'timeout' => 0.01,
-                    'blocking' => false,
-                    'body' => array(
-                        'action' => 'wp_cross_post_sync_single_site',
-                        'nonce' => wp_create_nonce('wp_cross_post_sync'),
-                        'post_id' => $post_id,
-                        'site_id' => $site_id
-                    )
-                )
-            );
-        }
-
-        // 非同期リクエストを送信
-        foreach ($async_requests as $site_id => $request) {
-            $response = wp_remote_post($request['url'], $request['args']);
+            // WP_Cross_Postのインスタンスを取得
+            global $wp_cross_post;
             
-            // wp_remote_postが即座に返るため、実際の処理は別途実行される
-            if (is_wp_error($response)) {
-                $results[$site_id] = $response;
+            if ($wp_cross_post && method_exists($wp_cross_post, 'schedule_async_sync')) {
+                $task_id = $wp_cross_post->schedule_async_sync($post_id, $site_id);
+                if ($task_id) {
+                    $scheduled_tasks[] = $task_id;
+                    $results[$site_id] = 'async_request_sent';
+                } else {
+                    $results[$site_id] = $this->error_manager->handle_general_error('非同期処理のスケジュールに失敗しました。', 'async_schedule_failed');
+                }
             } else {
-                // 成功した場合は、後で結果を取得する必要がある
-                $results[$site_id] = 'async_request_sent';
+                // フォールバック: 通常の同期処理
+                $this->debug_manager->log('非同期処理が利用できません。通常の同期処理を実行します。', 'warning', array(
+                    'post_id' => $post_id,
+                    'site_id' => $site_id
+                ));
+                
+                $result = $this->sync_to_single_site($post_id, $site_id);
+                $results[$site_id] = $result;
             }
         }
 
         $this->debug_manager->log('並列同期リクエストを送信完了', 'info', array(
             'post_id' => $post_id,
-            'sent_request_count' => count($async_requests)
+            'sent_request_count' => count($scheduled_tasks)
         ));
         
         return $results;
@@ -588,12 +590,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
             $category_terms = wp_get_post_categories( $post->ID, array('fields' => 'all') );
             if ( !is_wp_error( $category_terms ) ) {
                 foreach ( $category_terms as $term ) {
-                    $categories[] = array(
-                        'id' => $term->term_id,
-                        'name' => $term->name,
-                        'slug' => $term->slug,
-                        'parent' => $term->parent
-                    );
+                    $categories[] = $term->term_id;
                 }
                 $this->debug_manager->log('カテゴリー情報を取得: ' . json_encode( $categories ), 'debug');
             } else {
@@ -606,14 +603,11 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
             $tag_terms = wp_get_post_tags( $post->ID, array('fields' => 'all') );
             if ( !is_wp_error( $tag_terms ) ) {
                 foreach ( $tag_terms as $term ) {
-                    $tags[] = array(
-                        'id' => $term->term_id,
-                        'name' => $term->name,
-                        'slug' => $term->slug
-                    );
+                    $tags[] = $term->term_id;
                 }
             }
             $post_data['tags'] = $tags;
+            $this->debug_manager->log('タグ情報を取得', 'debug');
 
             // アイキャッチ画像の処理を追加
             $thumbnail_id = get_post_thumbnail_id( $post->ID );

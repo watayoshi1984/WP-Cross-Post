@@ -42,14 +42,14 @@ class WP_Cross_Post_Image_Manager implements WP_Cross_Post_Image_Manager_Interfa
      *
      * @var int
      */
-    private $max_retries = 3;
+    private $max_retries = 5;
 
     /**
      * リトライ待機時間（秒）
      *
      * @var int
      */
-    private $retry_wait_time = 2;
+    private $retry_wait_time = 5;
 
     /**
      * インスタンスの取得
@@ -111,6 +111,27 @@ class WP_Cross_Post_Image_Manager implements WP_Cross_Post_Image_Manager_Interfa
         // WordPress 6.5以降のアプリケーションパスワード対応
         $auth_header = $this->auth_manager->get_auth_header($site_data);
         
+        // 画像ファイルの取得
+        $image_data = file_get_contents($media_data['source_url']);
+        if ($image_data === false) {
+            $this->debug_manager->log('アイキャッチ画像の取得に失敗しました。', 'error', array(
+                'site_url' => $site_data['url'],
+                'post_id' => $post_id,
+                'media_url' => $media_data['source_url']
+            ));
+            return null;
+        }
+        
+        // 画像データの検証
+        if (empty($image_data)) {
+            $this->debug_manager->log('アイキャッチ画像データが空です。', 'error', array(
+                'site_url' => $site_data['url'],
+                'post_id' => $post_id,
+                'media_url' => $media_data['source_url']
+            ));
+            return null;
+        }
+        
         // 最大リトライ回数まで試行
         for ($attempt = 0; $attempt < $this->max_retries; $attempt++) {
             $response = wp_remote_post($site_data['url'] . '/wp-json/wp/v2/media', array(
@@ -119,28 +140,42 @@ class WP_Cross_Post_Image_Manager implements WP_Cross_Post_Image_Manager_Interfa
                     'Authorization' => $auth_header,
                     'Content-Disposition' => 'attachment; filename="' . basename($media_data['source_url']) . '"'
                 ),
-                'body' => file_get_contents($media_data['source_url'])
+                'body' => $image_data
             ));
 
             if (!is_wp_error($response)) {
                 $status_code = wp_remote_retrieve_response_code($response);
                 if ($status_code === 201) {
                     $media = json_decode(wp_remote_retrieve_body($response), true);
-                    $this->debug_manager->log(sprintf(
-                        'アイキャッチ画像の同期が成功しました。（試行回数: %d/%d）',
-                        $attempt + 1,
-                        $this->max_retries
-                    ), 'info', array(
-                        'media_id' => $media['id'],
-                        'media_url' => $media['source_url'],
-                        'site_url' => $site_data['url'],
-                        'post_id' => $post_id
+                    
+                    // 同期先のサイトでアイキャッチ画像が適切に設定されているかを確認
+                    $media_check_response = wp_remote_get($site_data['url'] . '/wp-json/wp/v2/media/' . $media['id'], array(
+                        'timeout' => 30,
+                        'headers' => array(
+                            'Authorization' => $auth_header
+                        )
                     ));
-                    return array(
-                        'id' => $media['id'],
-                        'source_url' => $media['source_url'],
-                        'alt_text' => $media['alt_text']
-                    );
+                    
+                    if (!is_wp_error($media_check_response) && wp_remote_retrieve_response_code($media_check_response) === 200) {
+                        $media_check = json_decode(wp_remote_retrieve_body($media_check_response), true);
+                        if (isset($media_check['source_url']) && $media_check['source_url'] === $media['source_url']) {
+                            $this->debug_manager->log(sprintf(
+                                'アイキャッチ画像の同期が成功しました。（試行回数: %d/%d）',
+                                $attempt + 1,
+                                $this->max_retries
+                            ), 'info', array(
+                                'media_id' => $media['id'],
+                                'media_url' => $media['source_url'],
+                                'site_url' => $site_data['url'],
+                                'post_id' => $post_id
+                            ));
+                            return array(
+                                'id' => $media['id'],
+                                'source_url' => $media['source_url'],
+                                'alt_text' => $media['alt_text']
+                            );
+                        }
+                    }
                 }
             }
 

@@ -131,12 +131,7 @@ class WP_Cross_Post_Post_Data_Preparer implements WP_Cross_Post_Post_Data_Prepar
             $category_terms = wp_get_post_categories( $post->ID, array('fields' => 'all') );
             if ( !is_wp_error( $category_terms ) ) {
                 foreach ( $category_terms as $term ) {
-                    $categories[] = array(
-                        'id' => $term->term_id,
-                        'name' => $term->name,
-                        'slug' => $term->slug,
-                        'parent' => $term->parent
-                    );
+                    $categories[] = $term->term_id;
                 }
                 $this->debug_manager->log('カテゴリー情報を取得: ' . json_encode( $categories ), 'debug', array(
                     'post_id' => $post->ID,
@@ -152,11 +147,7 @@ class WP_Cross_Post_Post_Data_Preparer implements WP_Cross_Post_Post_Data_Prepar
             $tag_terms = wp_get_post_tags( $post->ID, array('fields' => 'all') );
             if ( !is_wp_error( $tag_terms ) ) {
                 foreach ( $tag_terms as $term ) {
-                    $tags[] = array(
-                        'id' => $term->term_id,
-                        'name' => $term->name,
-                        'slug' => $term->slug
-                    );
+                    $tags[] = $term->term_id;
                 }
             }
             $post_data['tags'] = $tags;

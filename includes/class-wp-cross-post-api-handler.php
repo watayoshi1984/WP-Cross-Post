@@ -249,6 +249,21 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
             
             // レート制限の処理
             $response = $this->rate_limit_manager->handle_rate_limit($normalized_url, $response);
+            
+            // HTTPステータスコードが201以外の場合には、エラーとして処理
+            if (!is_wp_error($response)) {
+                $status_code = wp_remote_retrieve_response_code($response);
+                if ($status_code !== 201) {
+                    $this->debug_manager->log('投稿データの同期に失敗しました。', 'error', array(
+                        'site_url' => $normalized_url,
+                        'post_id' => isset($post_data['id']) ? $post_data['id'] : null,
+                        'status_code' => $status_code,
+                        'response_body' => wp_remote_retrieve_body($response)
+                    ));
+                    return new WP_Error('sync_failed', '投稿データの同期に失敗しました。HTTPステータスコード: ' . $status_code);
+                }
+            }
+            
             $result = $this->error_manager->handle_api_error($response, '投稿データの同期');
             
             $this->debug_manager->log('投稿データの同期を完了', 'info', array(
@@ -278,66 +293,72 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
     /**
      * 投稿データの準備
      */
-    private function prepare_post_data($post_data, $site_data) {
-        $prepared_data = array(
-            'title' => isset($post_data['title']) ? $post_data['title'] : '',
-            'content' => isset($post_data['content']) ? $post_data['content'] : '',
-            'excerpt' => isset($post_data['excerpt']) ? $post_data['excerpt'] : '',
-            'status' => isset($post_data['status']) ? $post_data['status'] : 'draft',
-            'date' => isset($post_data['date']) ? $post_data['date'] : '',
-            'date_gmt' => isset($post_data['date_gmt']) ? $post_data['date_gmt'] : '',
-            'modified' => isset($post_data['modified']) ? $post_data['modified'] : '',
-            'modified_gmt' => isset($post_data['modified_gmt']) ? $post_data['modified_gmt'] : '',
-            'slug' => isset($post_data['slug']) ? $post_data['slug'] : '',
-            'author' => isset($post_data['author']) ? $post_data['author'] : 1
-        );
+    private function prepare_post_data($post_data) {
+        $this->debug_manager->log('投稿データの準備を開始', 'debug', $post_data);
         
-        // カテゴリーとタグの処理
-        if (isset($post_data['categories'])) {
-            // 配列の場合はIDのリストに変換
-            if (is_array($post_data['categories'])) {
-                $category_ids = array();
-                foreach ($post_data['categories'] as $category) {
-                    if (is_array($category) && isset($category['id'])) {
-                        $category_ids[] = $category['id'];
-                    } elseif (is_numeric($category)) {
-                        $category_ids[] = $category;
-                    }
-                }
-                $prepared_data['categories'] = $category_ids;
-            } else {
-                $prepared_data['categories'] = $post_data['categories'];
+        // 必須フィールドの確認
+        $required_fields = ['title', 'content', 'status'];
+        foreach ($required_fields as $field) {
+            if (!isset($post_data[$field])) {
+                $this->debug_manager->log("必須フィールドが不足: {$field}", 'error', $post_data);
+                throw new Exception("必須フィールドが不足しています: {$field}");
             }
         }
         
-        if (isset($post_data['tags'])) {
-            // 配列の場合はIDのリストに変換
-            if (is_array($post_data['tags'])) {
-                $tag_ids = array();
-                foreach ($post_data['tags'] as $tag) {
-                    if (is_array($tag) && isset($tag['id'])) {
-                        $tag_ids[] = $tag['id'];
-                    } elseif (is_numeric($tag)) {
-                        $tag_ids[] = $tag;
-                    }
+        // カテゴリーの処理
+        if (isset($post_data['categories']) && is_array($post_data['categories'])) {
+            $post_data['categories'] = array_values($post_data['categories']);
+        }
+        
+        // タグの処理 - WordPress REST APIの仕様に合わせて修正
+        if (isset($post_data['tags']) && is_array($post_data['tags'])) {
+            $post_data['tags'] = array_values($post_data['tags']);
+        }
+        
+        // アイキャッチ画像の処理 - Array to string conversionエラーを修正
+        if (isset($post_data['featured_media'])) {
+            if (is_array($post_data['featured_media'])) {
+                // 配列の場合は'id'キーの値を使用
+                if (isset($post_data['featured_media']['id'])) {
+                    $post_data['featured_media'] = $post_data['featured_media']['id'];
+                } else {
+                    // 'id'キーがない場合は、配列の最初の要素を使用
+                    $post_data['featured_media'] = reset($post_data['featured_media']);
                 }
-                $prepared_data['tags'] = $tag_ids;
-            } else {
-                $prepared_data['tags'] = $post_data['tags'];
+            } elseif (!is_numeric($post_data['featured_media'])) {
+                // 数値でない場合は0に設定
+                $post_data['featured_media'] = 0;
             }
         }
         
-        // アイキャッチ画像の処理
-        if (isset($post_data['featured_media']) && $post_data['featured_media']) {
-            $prepared_data['featured_media'] = $this->sync_featured_image($site_data, $post_data['featured_media']);
+        // その他のフィールドの処理
+        $allowed_fields = [
+            'title', 'content', 'excerpt', 'status', 'slug', 'author', 
+            'featured_media', 'comment_status', 'ping_status', 'sticky',
+            'categories', 'tags_input', 'meta', 'template'
+        ];
+        
+        $filtered_data = array();
+        foreach ($allowed_fields as $field) {
+            if (isset($post_data[$field])) {
+                // 配列を文字列に変換する前に、配列かどうかをチェック
+                if (is_array($post_data[$field])) {
+                    // 特定のフィールド（例: 'featured_media'）が配列の場合の処理
+                    if ($field === 'featured_media') {
+                        // すでに上で処理済みなので、ここでは何もしない
+                        $filtered_data[$field] = $post_data[$field];
+                    } else {
+                        // その他の配列フィールドはJSONエンコード
+                        $filtered_data[$field] = wp_json_encode($post_data[$field]);
+                    }
+                } else {
+                    $filtered_data[$field] = $post_data[$field];
+                }
+            }
         }
         
-        // カスタムフィールドの処理
-        if (isset($post_data['meta'])) {
-            $prepared_data['meta'] = $post_data['meta'];
-        }
-        
-        return $prepared_data;
+        $this->debug_manager->log('投稿データの準備が完了', 'debug', $filtered_data);
+        return $filtered_data;
     }
 
     /**
@@ -427,20 +448,51 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
         // メディアデータの取得
         $media_data = get_post($media_id);
         if (!$media_data) {
+            $this->debug_manager->log('メディアデータが見つかりません', 'error', array(
+                'media_id' => $media_id
+            ));
             return false;
         }
         
         // 画像ファイルの取得
         $image_url = wp_get_attachment_url($media_id);
+        if (!$image_url) {
+            $this->debug_manager->log('画像URLが取得できません', 'error', array(
+                'media_id' => $media_id
+            ));
+            return false;
+        }
+        
         $image_data = wp_remote_get($image_url);
         if (is_wp_error($image_data)) {
+            $this->debug_manager->log('画像データの取得に失敗しました', 'error', array(
+                'media_id' => $media_id,
+                'image_url' => $image_url,
+                'error' => $image_data->get_error_message()
+            ));
             return $image_data;
         }
         
         // 画像データの準備
         $image_content = wp_remote_retrieve_body($image_data);
+        if (empty($image_content)) {
+            $this->debug_manager->log('画像コンテンツが空です', 'error', array(
+                'media_id' => $media_id,
+                'image_url' => $image_url
+            ));
+            return false;
+        }
+        
         $filename = basename($image_url);
         $filetype = wp_check_filetype($filename);
+        
+        if (empty($filetype['type'])) {
+            $this->debug_manager->log('ファイルタイプが取得できません', 'error', array(
+                'media_id' => $media_id,
+                'filename' => $filename
+            ));
+            return false;
+        }
         
         // 画像のアップロード
         $response = wp_remote_post($site_data['url'] . '/wp-json/wp/v2/media', array(
@@ -457,11 +509,31 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
         $result = $this->error_manager->handle_api_error($response, 'アイキャッチ画像の同期');
         
         if (is_wp_error($result)) {
+            $this->debug_manager->log('アイキャッチ画像の同期に失敗しました', 'error', array(
+                'media_id' => $media_id,
+                'site_url' => $site_data['url'],
+                'error' => $result->get_error_message()
+            ));
             return $result;
         }
         
         $new_media = json_decode(wp_remote_retrieve_body($response), true);
+        if (!isset($new_media['id'])) {
+            $this->debug_manager->log('新しいメディアIDが取得できません', 'error', array(
+                'media_id' => $media_id,
+                'site_url' => $site_data['url'],
+                'response' => $new_media
+            ));
+            return false;
+        }
+        
         update_option("wp_cross_post_synced_media_{$site_data['id']}_{$media_id}", $new_media['id']);
+        
+        $this->debug_manager->log('アイキャッチ画像の同期が完了しました', 'info', array(
+            'media_id' => $media_id,
+            'new_media_id' => $new_media['id'],
+            'site_url' => $site_data['url']
+        ));
         
         return $new_media['id'];
     }
