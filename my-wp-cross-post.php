@@ -143,6 +143,29 @@ if (!class_exists('WP_Cross_Post')) {
             register_deactivation_hook(__FILE__, array($this, 'deactivate'));
         }
 
+        /**
+         * 非同期同期タスクをスケジュール
+         */
+        public function schedule_async_sync($post_id, $site_id) {
+            // タスクをスケジュール
+            $task_id = wp_schedule_single_event(time(), 'wp_cross_post_process_async_sync', array($post_id, $site_id));
+            
+            if ($task_id) {
+                $this->debug_manager->log('非同期同期タスクをスケジュールしました', 'info', array(
+                    'post_id' => $post_id,
+                    'site_id' => $site_id,
+                    'task_id' => $task_id
+                ));
+                return $task_id;
+            } else {
+                $this->debug_manager->log('非同期同期タスクのスケジュールに失敗しました', 'error', array(
+                    'post_id' => $post_id,
+                    'site_id' => $site_id
+                ));
+                return false;
+            }
+        }
+
         public function register_post_types() {
             // 非同期処理用のカスタムポストタイプを登録
             register_post_type('wp_cross_post_async', array(

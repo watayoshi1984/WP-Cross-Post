@@ -219,7 +219,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         }
 
         // 投稿データの準備
-        $post_data = $this->post_data_preparer->prepare_post_data($post, $selected_sites);
+        $post_data = $this->prepare_post_data($post, $selected_sites);
 
         if (is_wp_error($post_data)) {
             $this->debug_manager->log('投稿データの準備に失敗', 'error', array(
@@ -364,7 +364,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         }
 
         // 投稿データの準備
-        $post_data = $this->post_data_preparer->prepare_post_data($post, array($site_id));
+        $post_data = $this->prepare_post_data($post, array($site_id));
 
         if (is_wp_error($post_data)) {
             $this->debug_manager->log('投稿データの準備に失敗', 'error', array(
@@ -465,7 +465,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         }
 
         // 投稿データの準備
-        $post_data = $this->post_data_preparer->prepare_post_data($post, $selected_sites);
+        $post_data = $this->prepare_post_data($post, $selected_sites);
 
         if (is_wp_error($post_data)) {
             $this->debug_manager->log('投稿データの準備に失敗', 'error', array(
@@ -536,12 +536,16 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
 
             // 投稿データの準備
             $post_data = array(
+                'id' => $post->ID,
                 'title'   => $post->post_title,
                 'content' => $this->prepare_block_content($post->post_content, $site_data),
                 'status'  => $post->post_status, // 投稿状態を元の投稿から取得
                 'slug'    => $post->post_name,
                 'date'    => $post->post_date,
                 'date_gmt' => $post->post_date_gmt,
+                'modified' => $post->post_modified,
+                'modified_gmt' => $post->post_modified_gmt,
+                'author' => $post->post_author,
                 'excerpt' => array(
                     'raw' => get_post_meta($post->ID, '_swell_meta', true)['excerpt'] ?? $post->post_excerpt,
                     'rendered' => get_post_meta($post->ID, '_swell_meta', true)['excerpt'] ?? $post->post_excerpt
@@ -1081,6 +1085,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
             }
 
             $image_data = array(
+                'id' => $thumbnail_id,
                 'url' => $image_url,
             'file_path' => $file_path,
                 'width' => isset($image_meta['width']) ? $image_meta['width'] : null,

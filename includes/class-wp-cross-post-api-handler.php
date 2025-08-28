@@ -231,7 +231,7 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
             
             $this->debug_manager->log('投稿データの同期を開始', 'info', array(
                 'site_url' => $normalized_url,
-                'post_id' => $post_data['id']
+                'post_id' => isset($post_data['id']) ? $post_data['id'] : null
             ));
             
             // 投稿データの準備
@@ -253,7 +253,7 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
             
             $this->debug_manager->log('投稿データの同期を完了', 'info', array(
                 'site_url' => $normalized_url,
-                'post_id' => $post_data['id'],
+                'post_id' => isset($post_data['id']) ? $post_data['id'] : null,
                 'success' => !is_wp_error($result)
             ));
             
@@ -269,29 +269,62 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
     }
 
     /**
+     * URLのバリデーションと正規化（互換性のためのラッパーメソッド）
+     */
+    public function validate_and_normalize_url($url) {
+        return $this->normalize_site_url($url);
+    }
+
+    /**
      * 投稿データの準備
      */
     private function prepare_post_data($post_data, $site_data) {
         $prepared_data = array(
-            'title' => $post_data['title'],
-            'content' => $post_data['content'],
-            'excerpt' => $post_data['excerpt'],
-            'status' => $post_data['status'],
-            'date' => $post_data['date'],
-            'date_gmt' => $post_data['date_gmt'],
-            'modified' => $post_data['modified'],
-            'modified_gmt' => $post_data['modified_gmt'],
-            'slug' => $post_data['slug'],
-            'author' => $post_data['author']
+            'title' => isset($post_data['title']) ? $post_data['title'] : '',
+            'content' => isset($post_data['content']) ? $post_data['content'] : '',
+            'excerpt' => isset($post_data['excerpt']) ? $post_data['excerpt'] : '',
+            'status' => isset($post_data['status']) ? $post_data['status'] : 'draft',
+            'date' => isset($post_data['date']) ? $post_data['date'] : '',
+            'date_gmt' => isset($post_data['date_gmt']) ? $post_data['date_gmt'] : '',
+            'modified' => isset($post_data['modified']) ? $post_data['modified'] : '',
+            'modified_gmt' => isset($post_data['modified_gmt']) ? $post_data['modified_gmt'] : '',
+            'slug' => isset($post_data['slug']) ? $post_data['slug'] : '',
+            'author' => isset($post_data['author']) ? $post_data['author'] : 1
         );
         
         // カテゴリーとタグの処理
         if (isset($post_data['categories'])) {
-            $prepared_data['categories'] = $this->sync_taxonomies($site_data, 'category', $post_data['categories']);
+            // 配列の場合はIDのリストに変換
+            if (is_array($post_data['categories'])) {
+                $category_ids = array();
+                foreach ($post_data['categories'] as $category) {
+                    if (is_array($category) && isset($category['id'])) {
+                        $category_ids[] = $category['id'];
+                    } elseif (is_numeric($category)) {
+                        $category_ids[] = $category;
+                    }
+                }
+                $prepared_data['categories'] = $category_ids;
+            } else {
+                $prepared_data['categories'] = $post_data['categories'];
+            }
         }
         
         if (isset($post_data['tags'])) {
-            $prepared_data['tags'] = $this->sync_taxonomies($site_data, 'post_tag', $post_data['tags']);
+            // 配列の場合はIDのリストに変換
+            if (is_array($post_data['tags'])) {
+                $tag_ids = array();
+                foreach ($post_data['tags'] as $tag) {
+                    if (is_array($tag) && isset($tag['id'])) {
+                        $tag_ids[] = $tag['id'];
+                    } elseif (is_numeric($tag)) {
+                        $tag_ids[] = $tag;
+                    }
+                }
+                $prepared_data['tags'] = $tag_ids;
+            } else {
+                $prepared_data['tags'] = $post_data['tags'];
+            }
         }
         
         // アイキャッチ画像の処理
@@ -414,14 +447,14 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
             'timeout' => 60,
             'headers' => array(
                 'Authorization' => $this->auth_manager->get_auth_header($site_data),
-                'Content-Type' => $filetype['type'],
-                'Content-Disposition' => 'attachment; filename="' . $filename . '"'
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                'Content-Type' => $filetype['type']
             ),
             'body' => $image_content
         ));
         
         $response = $this->rate_limit_manager->handle_rate_limit($site_data['url'], $response);
-        $result = $this->error_manager->handle_api_error($response, 'アイキャッチ画像のアップロード');
+        $result = $this->error_manager->handle_api_error($response, 'アイキャッチ画像の同期');
         
         if (is_wp_error($result)) {
             return $result;
@@ -429,6 +462,7 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
         
         $new_media = json_decode(wp_remote_retrieve_body($response), true);
         update_option("wp_cross_post_synced_media_{$site_data['id']}_{$media_id}", $new_media['id']);
+        
         return $new_media['id'];
     }
 
@@ -467,57 +501,35 @@ class WP_Cross_Post_API_Handler implements WP_Cross_Post_API_Handler_Interface {
                 return $local_terms;
             }
             
-            // リモートのタクソノミーを取得
-            $response = wp_remote_get($normalized_url . "/wp-json/wp/v2/{$taxonomy}?per_page=100", array(
-                'timeout' => 30,
-                'headers' => array(
-                    'Authorization' => $auth_header
-                )
-            ));
-            
-            $response = $this->rate_limit_manager->handle_rate_limit($normalized_url, $response);
-            $remote_terms_result = $this->error_manager->handle_api_error($response, "{$taxonomy}のリモート取得");
-            
-            if (is_wp_error($remote_terms_result)) {
-                return $remote_terms_result;
-            }
-            
-            $remote_terms = json_decode(wp_remote_retrieve_body($response), true);
-            $remote_terms_by_slug = array();
-            foreach ($remote_terms as $term) {
-                $remote_terms_by_slug[$term['slug']] = $term;
-            }
-            
-            // タクソノミーの同期
             $synced_count = 0;
             $error_count = 0;
             
+            // 各タームを同期
             foreach ($local_terms as $term) {
-                if (isset($remote_terms_by_slug[$term->slug])) {
-                    // 既に存在する場合はスキップ
-                    continue;
-                }
+                $term_data = array(
+                    'name' => $term->name,
+                    'slug' => $term->slug,
+                    'description' => $term->description
+                );
                 
-                // 新規作成
                 $response = wp_remote_post($normalized_url . "/wp-json/wp/v2/{$taxonomy}", array(
                     'timeout' => 30,
                     'headers' => array(
                         'Authorization' => $auth_header,
                         'Content-Type' => 'application/json'
                     ),
-                    'body' => wp_json_encode(array(
-                        'name' => $term->name,
-                        'slug' => $term->slug,
-                        'description' => $term->description
-                    ))
+                    'body' => wp_json_encode($term_data)
                 ));
                 
                 $response = $this->rate_limit_manager->handle_rate_limit($normalized_url, $response);
-                $result = $this->error_manager->handle_api_error($response, "{$term->name}の新規作成");
+                $result = $this->error_manager->handle_api_error($response, "{$taxonomy}の同期");
                 
                 if (is_wp_error($result)) {
                     $error_count++;
-                    $this->debug_manager->log("{$term->name}の新規作成に失敗", 'error', array(
+                    $this->debug_manager->log("{$taxonomy}の同期に失敗", 'error', array(
+                        'term_name' => $term->name,
+                        'term_slug' => $term->slug,
+                        'taxonomy' => $taxonomy,
                         'error' => $result->get_error_message()
                     ));
                 } else {
