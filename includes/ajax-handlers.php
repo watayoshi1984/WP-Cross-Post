@@ -141,3 +141,37 @@ function wp_cross_post_import_settings() {
     }
 }
 add_action('wp_ajax_wp_cross_post_import_settings', 'wp_cross_post_import_settings');
+
+/**
+ * サイトAPI詳細診断テスト
+ */
+function wp_cross_post_detailed_api_test() {
+    check_ajax_referer('wp_cross_post_nonce', 'security');
+
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('権限がありません。');
+    }
+
+    $site_id = sanitize_text_field($_POST['site_id']);
+
+    // サイトデータの取得
+    global $wp_cross_post;
+    $site_handler = $wp_cross_post->site_handler;
+    $site = $site_handler->get_site($site_id);
+
+    if (!$site) {
+        wp_send_json_error('サイトが見つかりません。');
+    }
+
+    // APIハンドラーからの詳細テスト実行
+    $api_handler = $wp_cross_post->api_handler;
+    $test_results = $api_handler->detailed_api_test($site);
+
+    wp_send_json_success(array(
+        'site_id' => $site_id,
+        'site_url' => $site['url'],
+        'test_results' => $test_results,
+        'message' => 'API詳細テストが完了しました。'
+    ));
+}
+add_action('wp_ajax_wp_cross_post_detailed_api_test', 'wp_cross_post_detailed_api_test');

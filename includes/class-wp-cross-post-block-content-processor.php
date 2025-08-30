@@ -261,16 +261,6 @@ class WP_Cross_Post_Block_Content_Processor implements WP_Cross_Post_Block_Conte
                 'site_url' => $site_data['url']
             ));
             
-            // 一時ファイルの作成
-            $temp_file = download_url($image_url);
-            if (is_wp_error($temp_file)) {
-                throw new Exception($temp_file->get_error_message());
-            }
-
-            // ファイル情報の取得
-            $file_name = basename(parse_url($image_url, PHP_URL_PATH));
-            $file_type = wp_check_filetype($file_name);
-
             // メディアのアップロード
             $media_data = array(
                 'source_url' => $image_url,
@@ -278,9 +268,6 @@ class WP_Cross_Post_Block_Content_Processor implements WP_Cross_Post_Block_Conte
             );
 
             $result = $this->image_manager->sync_featured_image($site_data, $media_data, 0);
-            
-            // 一時ファイルの削除
-            @unlink($temp_file);
             
             $this->debug_manager->log('コンテンツ画像の同期を完了', 'info', array(
                 'image_url' => $image_url,

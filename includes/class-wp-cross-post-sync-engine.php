@@ -191,19 +191,46 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
             update_post_meta($task_id, '_wp_cross_post_post_id', $post_id);
             update_post_meta($task_id, '_wp_cross_post_selected_sites', $selected_sites);
             
-            // すぐに処理をスケジュール
-            wp_schedule_single_event(time(), 'wp_cross_post_process_async_sync', array($post_id, $selected_sites));
-            
-            $this->debug_manager->log('非同期同期処理をスケジュール', 'info', array(
-                'post_id' => $post_id,
-                'task_id' => $task_id
-            ));
-            
-            return array(
-                'status' => 'scheduled',
-                'task_id' => $task_id,
-                'message' => '同期処理をスケジュールしました。'
-            );
+            // WP-Cronが有効かどうかを確認
+            if (!wp_next_scheduled('wp_cross_post_process_async_sync', array($post_id, $selected_sites))) {
+                // すぐに処理をスケジュール
+                $schedule_result = wp_schedule_single_event(time(), 'wp_cross_post_process_async_sync', array($post_id, $selected_sites));
+                
+                if ($schedule_result) {
+                    $this->debug_manager->log('非同期同期処理をスケジュール', 'info', array(
+                        'post_id' => $post_id,
+                        'task_id' => $task_id
+                    ));
+                    
+                    return array(
+                        'status' => 'scheduled',
+                        'task_id' => $task_id,
+                        'message' => '同期処理をスケジュールしました。'
+                    );
+                } else {
+                    $this->debug_manager->log('非同期同期処理のスケジュールに失敗しました', 'error', array(
+                        'post_id' => $post_id,
+                        'task_id' => $task_id,
+                        'reason' => 'wp_schedule_single_event returned false'
+                    ));
+                    
+                    // スケジュールに失敗した場合は、タスクポストを削除
+                    wp_delete_post($task_id, true);
+                    
+                    return $this->error_manager->handle_general_error('非同期処理のスケジュールに失敗しました。', 'async_schedule_failed');
+                }
+            } else {
+                $this->debug_manager->log('非同期同期処理は既にスケジュールされています', 'info', array(
+                    'post_id' => $post_id,
+                    'task_id' => $task_id
+                ));
+                
+                return array(
+                    'status' => 'scheduled',
+                    'task_id' => $task_id,
+                    'message' => '同期処理は既にスケジュールされています。'
+                );
+            }
         }
         
         return $this->error_manager->handle_general_error('非同期処理のスケジュールに失敗しました。', 'async_schedule_failed');
@@ -254,8 +281,11 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
             // アイキャッチ画像の同期
             if (isset($post_data['featured_media'])) {
                 $media_result = $this->image_manager->sync_featured_image($site, $post_data['featured_media'], $main_post->ID);
-                if ($media_result) {
+                if ($media_result && isset($media_result['id'])) {
                     $post_data['featured_media'] = $media_result['id'];
+                } else {
+                    // 失敗時はfeatured_mediaを送信しない
+                    unset($post_data['featured_media']);
                 }
             }
             
@@ -289,6 +319,7 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
     private function sync_posts_parallel($main_post, $sites, $selected_sites) {
         $results = array();
         $requests = array();
+        $request_context = array(); // site_id => ['site' => site, 'post_data' => post_data]
         
         // リクエストの準備
         foreach ($sites as $site) {
@@ -330,8 +361,11 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
             // アイキャッチ画像の同期
             if (isset($post_data['featured_media'])) {
                 $media_result = $this->image_manager->sync_featured_image($site, $post_data['featured_media'], $main_post->ID);
-                if ($media_result) {
+                if ($media_result && isset($media_result['id'])) {
                     $post_data['featured_media'] = $media_result['id'];
+                } else {
+                    // 失敗時はfeatured_mediaを送信しない（投稿全体の失敗を防ぐ）
+                    unset($post_data['featured_media']);
                 }
             }
             
@@ -343,10 +377,17 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
                     'timeout' => 30,
                     'headers' => array(
                         'Authorization' => $auth_header,
-                        'Content-Type' => 'application/json'
+                        'Content-Type' => 'application/json',
+                        'Accept' => 'application/json'
                     ),
-                    'body' => json_encode($post_data)
+                    'body' => wp_json_encode($post_data)
                 )
+            );
+
+            // store context for robust response handling
+            $request_context[$site['id']] = array(
+                'site' => $site,
+                'post_data' => $post_data
             );
         }
         
@@ -355,7 +396,12 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
         
         // レスポンスを処理
         foreach ($responses as $site_id => $response) {
+            $context = isset($request_context[$site_id]) ? $request_context[$site_id] : null;
+            if ($context && is_array($context)) {
+                $remote_post_id = $this->handle_response_with_lookup($response, $context['site'], $context['post_data']);
+            } else {
             $remote_post_id = $this->handle_response($response);
+            }
             if (is_wp_error($remote_post_id)) {
                 $results[$site_id] = $remote_post_id;
             } else {
@@ -500,18 +546,155 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
 
-        if (empty($data) || !isset($data['id'])) {
+        // 正常（オブジェクトにid）
+        if (is_array($data) && isset($data['id'])) {
+            $this->debug_manager->log('APIレスポンスを処理', 'info', array(
+                'remote_post_id' => $data['id']
+            ));
+            return $data['id'];
+        }
+
+        // LocationヘッダーからID抽出のフォールバック
+        $location = wp_remote_retrieve_header($response, 'location');
+        if (!empty($location) && preg_match('#/wp-json/[^/]+/v\d+/posts/(\d+)#', $location, $m)) {
+            return (int) $m[1];
+        }
+        if (!empty($location) && preg_match('#/wp-json/wp/v2/posts/(\d+)#', $location, $m2)) {
+            return (int) $m2[1];
+        }
+        if (!empty($location) && preg_match('#/posts/(\d+)#', $location, $m3)) {
+            return (int) $m3[1];
+        }
+
+        // 一部環境で空配列や空ボディで200/201が返るケースのフォールバック
+        // 空配列や空文字の場合も、Locationヘッダーがない時に限り、これは後続のサイト固有情報が必要なため
+        // 呼び出し側でスラッグ/タイトル検索に委ねるのが安全。ここでは明確なエラーにせず詳細なログを残す。
             $this->debug_manager->log('無効なAPIレスポンス', 'error', array(
                 'response_body' => $body
             ));
             return $this->error_manager->handle_general_error('無効なAPIレスポンス', 'invalid_api_response');
         }
 
-        $this->debug_manager->log('APIレスポンスを処理', 'info', array(
-            'remote_post_id' => $data['id']
+    /**
+     * APIレスポンスの処理（フォールバック: Location, slug, title 検索）
+     */
+    private function handle_response_with_lookup($response, $site, $post_data) {
+        if (is_wp_error($response)) {
+            return $this->error_manager->handle_api_error($response, 'APIレスポンス処理');
+        }
+
+        $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code >= 400) {
+            return $this->error_manager->handle_api_error($response, 'APIレスポンス処理');
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        if (is_array($data) && isset($data['id'])) {
+            return (int) $data['id'];
+        }
+
+        // Location header fallback
+        $location = wp_remote_retrieve_header($response, 'location');
+        if (!empty($location)) {
+            if (preg_match('#/wp-json/[^/]+/v\\d+/posts/(\\d+)#', $location, $m) ||
+                preg_match('#/wp-json/wp/v2/posts/(\\d+)#', $location, $m) ||
+                preg_match('#/posts/(\\d+)#', $location, $m)) {
+                return (int) $m[1];
+            }
+        }
+
+        // Slug lookup
+        $slug = isset($post_data['slug']) ? $post_data['slug'] : '';
+        $auth_header = $this->auth_manager->get_auth_header($site);
+        if (!empty($slug)) {
+            $slug_for_query = rawurldecode((string) $slug);
+            $query = add_query_arg(array(
+                'slug' => $slug_for_query,
+                'status' => 'publish,future,draft,private',
+                'context' => 'edit',
+                'per_page' => 1,
+                'orderby' => 'date',
+                'order' => 'desc'
+            ), rtrim($site['url'], '/') . '/wp-json/wp/v2/posts');
+
+            $lookup = wp_remote_get($query, array(
+                'timeout' => 30,
+                'headers' => array(
+                    'Authorization' => $auth_header,
+                    'Accept' => 'application/json'
+                )
+            ));
+            if (!is_wp_error($lookup) && wp_remote_retrieve_response_code($lookup) === 200) {
+                $list = json_decode(wp_remote_retrieve_body($lookup), true);
+                if (is_array($list) && isset($list[0]['id'])) {
+                    return (int) $list[0]['id'];
+                }
+            }
+        }
+
+        // Title search fallback
+        $title = isset($post_data['title']) ? $post_data['title'] : '';
+        if (is_array($title)) {
+            $title = isset($title['raw']) ? $title['raw'] : (isset($title['rendered']) ? wp_strip_all_tags($title['rendered']) : '');
+        }
+        if (!empty($title)) {
+            $query = add_query_arg(array(
+                // add_query_arg handles encoding; avoid double-encoding which can break matching
+                'search' => wp_strip_all_tags((string) $title),
+                'status' => 'publish,future,draft,private',
+                'context' => 'edit',
+                'per_page' => 5,
+                'orderby' => 'date',
+                'order' => 'desc'
+            ), rtrim($site['url'], '/') . '/wp-json/wp/v2/posts');
+            $lookup = wp_remote_get($query, array(
+                'timeout' => 30,
+                'headers' => array(
+                    'Authorization' => $auth_header,
+                    'Accept' => 'application/json'
+                )
+            ));
+            if (!is_wp_error($lookup) && wp_remote_retrieve_response_code($lookup) === 200) {
+                $list = json_decode(wp_remote_retrieve_body($lookup), true);
+                if (is_array($list) && !empty($list)) {
+                    $picked = null;
+                    foreach ($list as $item) {
+                        if (isset($item['id'])) {
+                            if (!empty($slug) && isset($item['slug']) && $item['slug'] === $slug) {
+                                $picked = $item; break;
+                            }
+                            if ($picked === null) {
+                                $remote_title = '';
+                                if (isset($item['title'])) {
+                                    if (is_array($item['title']) && isset($item['title']['rendered'])) {
+                                        $remote_title = wp_strip_all_tags($item['title']['rendered']);
+                                    } elseif (is_string($item['title'])) {
+                                        $remote_title = $item['title'];
+                                    }
+                                }
+                                if (!empty($remote_title) && wp_strip_all_tags((string) $title) === $remote_title) {
+                                    $picked = $item;
+                                }
+                            }
+                        }
+                    }
+                    if ($picked === null) {
+                        $picked = $list[0];
+                    }
+                    if (isset($picked['id'])) {
+                        return (int) $picked['id'];
+                    }
+                }
+            }
+        }
+
+        // Give up with explicit error
+        $this->debug_manager->log('無効なAPIレスポンス（フォールバックでもID特定不可）', 'error', array(
+            'response_body' => $body
         ));
-        
-        return $data['id'];
+        return $this->error_manager->handle_general_error('無効なAPIレスポンス', 'invalid_api_response');
     }
 
     /**
@@ -526,6 +709,11 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
             if (is_wp_error($result)) {
                 $error_count++;
                 $errors[$site_id] = $result->get_error_message();
+                // 一部のサイトで失敗した場合のログ記録を改善
+                $this->debug_manager->log('サイトでの同期に失敗', 'error', array(
+                    'site_id' => $site_id,
+                    'error' => $result->get_error_message()
+                ));
             } else {
                 $success_count++;
             }
@@ -547,13 +735,15 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
                 // 一部成功した場合は警告として扱う
                 $this->debug_manager->log('一部の同期に失敗', 'warning', array(
                     'success_count' => $success_count,
-                    'error_count' => $error_count
+                    'error_count' => $error_count,
+                    'errors' => $errors
                 ));
                 return new WP_Error('partial_sync_success', $error_message, array('errors' => $errors));
             } else {
                 // 全て失敗した場合はエラーとして扱う
                 $this->debug_manager->log('すべての同期に失敗', 'error', array(
-                    'error_count' => $error_count
+                    'error_count' => $error_count,
+                    'errors' => $errors
                 ));
                 return $this->error_manager->handle_general_error($error_message, 'sync_failed');
             }

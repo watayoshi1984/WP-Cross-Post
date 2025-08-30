@@ -7,8 +7,9 @@ jQuery(document).ready($ => {
     let isSyncing = false;
 
     function updateSyncStatus(data) {
-        const { message, type, details } = data;
-        const icon = type === 'error' ? 'error' : (type === 'success' ? 'check_circle' : 'info');
+        const { message, details } = data;
+        const type = data && data.type ? data.type : 'info';
+        const icon = type === 'error' ? 'error' : (type === 'success' ? 'check_circle' : (type === 'warning' ? 'warning' : 'info'));
         
         let statusHtml = `
             <div class="status-message ${type}">
@@ -26,7 +27,7 @@ jQuery(document).ready($ => {
                             ${details.success_sites.map(site => `
                                 <li>
                                     <i class="material-icons">check_circle</i>
-                                    ${site.name}
+                                    ${site.site_label || site.site_name || site.name || site.site_id || (site && site.id) || 'Unknown Site'}
                                 </li>
                             `).join('')}
                         </ul>
@@ -42,7 +43,7 @@ jQuery(document).ready($ => {
                             ${details.failed_sites.map(site => `
                                 <li>
                                     <i class="material-icons">error</i>
-                                    ${site.name}
+                                    ${site.site_label || site.site_name || site.name || site.site_id || (site && site.id) || 'Unknown Site'}
                                     （エラー: ${site.error}）
                                 </li>
                             `).join('')}
@@ -216,8 +217,9 @@ jQuery(document).ready($ => {
                 nonce: wpCrossPost.nonce,
                 post_id: postId,
                 selected_sites: selectedSites,
-                parallel_sync: parallelSync, // 並列処理オプションを追加
-                async_sync: asyncSync // 非同期処理オプションを追加
+                // 送信は true のときのみ。false は送らない
+                ...(parallelSync ? { parallel_sync: true } : {}),
+                ...(asyncSync ? { async_sync: true } : {})
             },
             success: function(response) {
                 if (response.success) {

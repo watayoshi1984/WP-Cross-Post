@@ -38,29 +38,31 @@ jQuery(document).ready(function($) {
                 statusContainer.html('<p>同期中...</p>');
             },
             success: function(response) {
-                if (response.success) {
-                    statusContainer.html('<p class="success">' + response.data.message + '</p>');
-                    
-                    if (response.data.details) {
-                        var detailsHtml = '<ul class="sync-details">';
-                        
-                        if (response.data.details.success_sites) {
-                            response.data.details.success_sites.forEach(function(site) {
-                                detailsHtml += '<li class="success">✓ ' + site.name + '</li>';
-                            });
-                        }
-                        
-                        if (response.data.details.failed_sites) {
-                            response.data.details.failed_sites.forEach(function(site) {
-                                detailsHtml += '<li class="error">✗ ' + site.name + ': ' + site.error + '</li>';
-                            });
-                        }
-                        
-                        detailsHtml += '</ul>';
-                        statusContainer.append(detailsHtml);
+                var type = (response && response.data && response.data.type) ? response.data.type : (response && response.success ? 'success' : 'error');
+                var cssClass = type === 'error' ? 'error' : (type === 'warning' ? 'warning' : 'success');
+                var message = (response && response.data && response.data.message) ? response.data.message : (response && response.success ? '同期が完了しました。' : 'エラーが発生しました。');
+
+                statusContainer.html('<p class="' + cssClass + '">' + message + '</p>');
+
+                if (response && response.data && response.data.details) {
+                    var detailsHtml = '<ul class="sync-details">';
+
+                    if (response.data.details.success_sites) {
+                        response.data.details.success_sites.forEach(function(site) {
+                            var display = (site.site_label || site.site_name || site.name || site.site_id || site.id || 'Unknown Site');
+                            detailsHtml += '<li class="success">✓ ' + display + '</li>';
+                        });
                     }
-                } else {
-                    statusContainer.html('<p class="error">エラー: ' + response.data.message + '</p>');
+
+                    if (response.data.details.failed_sites) {
+                        response.data.details.failed_sites.forEach(function(site) {
+                            var display = (site.site_label || site.site_name || site.name || site.site_id || site.id || 'Unknown Site');
+                            detailsHtml += '<li class="error">✗ ' + display + ': ' + site.error + '</li>';
+                        });
+                    }
+
+                    detailsHtml += '</ul>';
+                    statusContainer.append(detailsHtml);
                 }
             },
             error: function() {

@@ -64,6 +64,7 @@ composer.lock
 dist/
 build/
 out/
+tests/
 
 # Coverage
 coverage/
@@ -72,12 +73,6 @@ coverage/
 *.sqlite
 *.sqlite3
 
-# Miscellaneous
-<<<<<<< HEAD
-*.md~
-
-# User specific directories
-watayoshi1984/
-=======
-*.md~
->>>>>>> 80b7cb32482b21d9b40c6aa9df99bbc9d47b0be4
+project.md
+refactoring.md
+task.md

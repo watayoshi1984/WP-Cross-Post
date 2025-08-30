@@ -36,6 +36,29 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         $this->rate_limit_manager = $rate_limit_manager;
     }
 
+    /**
+     * Build a human-friendly site label robustly for UI.
+     * Falls back to site URL host, then site_id, then 'Unknown Site'.
+     */
+    private function build_site_label($site_id, $site) {
+        // Prefer configured name
+        if (is_array($site)) {
+            if (!empty($site['name'])) {
+                return (string) $site['name'];
+            }
+            if (!empty($site['url'])) {
+                $host = parse_url($site['url'], PHP_URL_HOST);
+                if (!empty($host)) {
+                    return (string) $host;
+                }
+            }
+        }
+        if (!empty($site_id)) {
+            return (string) $site_id;
+        }
+        return 'Unknown Site';
+    }
+
     public function ajax_sync_post() {
         check_ajax_referer('wp_cross_post_sync', 'nonce');
 
@@ -49,8 +72,17 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
 
         $post_id = intval($_POST['post_id']);
         $selected_sites = isset($_POST['selected_sites']) ? array_map('sanitize_text_field', $_POST['selected_sites']) : array();
-        $parallel_sync = isset($_POST['parallel_sync']) ? (bool) $_POST['parallel_sync'] : false;
-        $async_sync = isset($_POST['async_sync']) ? (bool) $_POST['async_sync'] : false;
+        // Robust boolean parsing: accept '1', 'true', 'on', 'yes' as true; '0', 'false', 'off', 'no' as false
+        $parallel_sync = false;
+        if (isset($_POST['parallel_sync'])) {
+            $parsed = filter_var($_POST['parallel_sync'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            $parallel_sync = ($parsed === true);
+        }
+        $async_sync = false;
+        if (isset($_POST['async_sync'])) {
+            $parsed_async = filter_var($_POST['async_sync'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            $async_sync = ($parsed_async === true);
+        }
 
         // 設定から非同期処理の有効/無効を取得
         $config_manager = WP_Cross_Post_Config_Manager::get_settings();
@@ -123,14 +155,23 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
             $failed_sites = array();
             
             foreach ($result as $site_id => $sync_result) {
+                $site = $this->site_handler->get_site_data($site_id);
+                $site_label = $this->build_site_label($site_id, $site);
+
                 if (is_wp_error($sync_result)) {
                     $failed_sites[] = array(
                         'site_id' => $site_id,
+                        'site_label' => $site_label,
+                        'site_name' => $site_label,
+                        'name' => $site_label,
                         'error' => $sync_result->get_error_message()
                     );
                 } else {
                     $success_sites[] = array(
                         'site_id' => $site_id,
+                        'site_label' => $site_label,
+                        'site_name' => $site_label,
+                        'name' => $site_label,
                         'remote_post_id' => $sync_result
                     );
                 }
@@ -289,12 +330,16 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
                             'site_url' => $site_data['url'],
                             'error' => $media_url->get_error_message()
                         ));
+                        // リモートで有効なIDが無いため送信しない
+                        unset($post_data['featured_media']);
                     }
                 } else {
                     $this->debug_manager->log('アイキャッチ画像の同期に失敗しましたが、投稿の同期は継続します', 'warning', array(
                         'post_id' => $post_id,
                         'site_url' => $site_data['url']
                     ));
+                    // リモートで有効なIDが無いため送信しない
+                    unset($post_data['featured_media']);
                 }
             }
             
@@ -407,12 +452,16 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
                         'site_url' => $site_data['url'],
                         'error' => $media_url->get_error_message()
                     ));
+                    // リモートで有効なIDが無いため送信しない
+                    unset($post_data['featured_media']);
                 }
             } else {
                 $this->debug_manager->log('アイキャッチ画像の同期に失敗しましたが、投稿の同期は継続します', 'warning', array(
                     'post_id' => $post_id,
                     'site_url' => $site_data['url']
                 ));
+                // リモートで有効なIDが無いため送信しない
+                unset($post_data['featured_media']);
             }
         }
         
@@ -914,9 +963,9 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
                     $this->debug_manager->log('アイキャッチ画像を投稿に設定: 画像ID ' . $featured_media_id . ', 投稿ID ' . $remote_post_id, 'info');
                     
                     // アイキャッチ画像を設定
-                    // $update_result = $this->api_handler->update_post($site_data, $remote_post_id, array(
-                    //     'featured_media' => $featured_media_id
-                    // ));
+                    $update_result = $this->api_handler->update_post($site_data, $remote_post_id, array(
+                        'featured_media' => $featured_media_id
+                    ));
                     
                     if (is_wp_error($update_result)) {
                         $this->debug_manager->log('アイキャッチ画像の設定に失敗: ' . $update_result->get_error_message(), 'warning');

@@ -78,7 +78,7 @@ if (!class_exists('WP_Cross_Post')) {
             
             // 依存関係の設定
             $this->error_manager->set_dependencies($this->debug_manager);
-            $this->image_manager->set_dependencies($this->debug_manager, $this->auth_manager);
+            $this->image_manager->set_dependencies($this->debug_manager, $this->auth_manager, $this->rate_limit_manager);
             $this->post_data_preparer->set_dependencies($this->debug_manager, $this->block_content_processor);
             $this->block_content_processor->set_dependencies($this->debug_manager, $this->image_manager);
             $this->rate_limit_manager->set_dependencies($this->debug_manager, $this->error_manager);
@@ -148,21 +148,63 @@ if (!class_exists('WP_Cross_Post')) {
          */
         public function schedule_async_sync($post_id, $site_id) {
             // タスクをスケジュール
-            $task_id = wp_schedule_single_event(time(), 'wp_cross_post_process_async_sync', array($post_id, $site_id));
-            
-            if ($task_id) {
-                $this->debug_manager->log('非同期同期タスクをスケジュールしました', 'info', array(
-                    'post_id' => $post_id,
-                    'site_id' => $site_id,
-                    'task_id' => $task_id
-                ));
-                return $task_id;
+            // site_idが配列の場合、各サイトに対して個別にタスクをスケジュール
+            if (is_array($site_id)) {
+                $task_ids = array();
+                foreach ($site_id as $single_site_id) {
+                    // WP-Cronが有効かどうかを確認
+                    if (!wp_next_scheduled('wp_cross_post_process_async_sync', array($post_id, $single_site_id))) {
+                        $task_id = wp_schedule_single_event(time(), 'wp_cross_post_process_async_sync', array($post_id, $single_site_id));
+                        if ($task_id) {
+                            $task_ids[] = $task_id;
+                            $this->debug_manager->log('非同期同期タスクをスケジュールしました', 'info', array(
+                                'post_id' => $post_id,
+                                'site_id' => $single_site_id,
+                                'task_id' => $task_id
+                            ));
+                        } else {
+                            $this->debug_manager->log('非同期同期タスクのスケジュールに失敗しました', 'error', array(
+                                'post_id' => $post_id,
+                                'site_id' => $single_site_id,
+                                'reason' => 'wp_schedule_single_event returned false'
+                            ));
+                        }
+                    } else {
+                        $this->debug_manager->log('非同期同期タスクは既にスケジュールされています', 'info', array(
+                            'post_id' => $post_id,
+                            'site_id' => $single_site_id
+                        ));
+                    }
+                }
+                return $task_ids;
             } else {
-                $this->debug_manager->log('非同期同期タスクのスケジュールに失敗しました', 'error', array(
-                    'post_id' => $post_id,
-                    'site_id' => $site_id
-                ));
-                return false;
+                // site_idが単一の値の場合
+                // WP-Cronが有効かどうかを確認
+                if (!wp_next_scheduled('wp_cross_post_process_async_sync', array($post_id, $site_id))) {
+                    $task_id = wp_schedule_single_event(time(), 'wp_cross_post_process_async_sync', array($post_id, $site_id));
+                    
+                    if ($task_id) {
+                        $this->debug_manager->log('非同期同期タスクをスケジュールしました', 'info', array(
+                            'post_id' => $post_id,
+                            'site_id' => $site_id,
+                            'task_id' => $task_id
+                        ));
+                        return $task_id;
+                    } else {
+                        $this->debug_manager->log('非同期同期タスクのスケジュールに失敗しました', 'error', array(
+                            'post_id' => $post_id,
+                            'site_id' => $site_id,
+                            'reason' => 'wp_schedule_single_event returned false'
+                        ));
+                        return false;
+                    }
+                } else {
+                    $this->debug_manager->log('非同期同期タスクは既にスケジュールされています', 'info', array(
+                        'post_id' => $post_id,
+                        'site_id' => $site_id
+                    ));
+                    return true; // 既にスケジュールされている場合はtrueを返す
+                }
             }
         }
 

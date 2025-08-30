@@ -84,6 +84,7 @@ class WP_Cross_Post_Post_Data_Preparer implements WP_Cross_Post_Post_Data_Prepar
 
             // 基本的な投稿データの準備
             $post_data = array(
+                'id' => $post->ID,
                 'title' => $post->post_title,
                 'content' => $this->block_content_processor->prepare_block_content($post->post_content, $site_data),
                 'excerpt' => $post->post_excerpt,
@@ -126,12 +127,21 @@ class WP_Cross_Post_Post_Data_Preparer implements WP_Cross_Post_Post_Data_Prepar
                 ));
             }
 
-            // カテゴリー情報の取得（スラッグとIDの両方を送信）
+            // カテゴリー情報の取得（ローカルIDを取得し、リモートIDにマッピング）
             $categories = array();
             $category_terms = wp_get_post_categories( $post->ID, array('fields' => 'all') );
             if ( !is_wp_error( $category_terms ) ) {
                 foreach ( $category_terms as $term ) {
-                    $categories[] = $term->term_id;
+                    $local_id = (int)$term->term_id;
+                    $remote_id = $this->map_remote_term_id($site_data, 'categories', $local_id);
+                    if ($remote_id !== null) {
+                        $categories[] = $remote_id;
+                    } else {
+                        $this->debug_manager->log('カテゴリーのリモートIDが見つからないため除外', 'warning', array(
+                            'post_id' => $post->ID,
+                            'local_term_id' => $local_id
+                        ));
+                    }
                 }
                 $this->debug_manager->log('カテゴリー情報を取得: ' . json_encode( $categories ), 'debug', array(
                     'post_id' => $post->ID,
@@ -142,12 +152,21 @@ class WP_Cross_Post_Post_Data_Preparer implements WP_Cross_Post_Post_Data_Prepar
             }
             $post_data['categories'] = $categories;
 
-            // タグの取得（スラッグとIDの両方を送信）
+            // タグの取得（ローカルIDを取得し、リモートIDにマッピング）
             $tags = array();
             $tag_terms = wp_get_post_tags( $post->ID, array('fields' => 'all') );
             if ( !is_wp_error( $tag_terms ) ) {
                 foreach ( $tag_terms as $term ) {
-                    $tags[] = $term->term_id;
+                    $local_id = (int)$term->term_id;
+                    $remote_id = $this->map_remote_term_id($site_data, 'tags', $local_id);
+                    if ($remote_id !== null) {
+                        $tags[] = $remote_id;
+                    } else {
+                        $this->debug_manager->log('タグのリモートIDが見つからないため除外', 'warning', array(
+                            'post_id' => $post->ID,
+                            'local_term_id' => $local_id
+                        ));
+                    }
                 }
             }
             $post_data['tags'] = $tags;
@@ -201,6 +220,26 @@ class WP_Cross_Post_Post_Data_Preparer implements WP_Cross_Post_Post_Data_Prepar
             ));
             return new WP_Error('prepare_post_data_failed', $e->getMessage());
         }
+    }
+
+    /**
+     * ローカルタームIDをリモートIDへマッピング
+     *
+     * @param array|null $site_data サイト情報
+     * @param string $taxonomy 'categories' | 'tags'
+     * @param int $local_term_id ローカルタームID
+     * @return int|null リモートタームID（見つからない場合はnull）
+     */
+    private function map_remote_term_id($site_data, $taxonomy, $local_term_id) {
+        if (empty($site_data) || empty($site_data['id'])) {
+            return null;
+        }
+        $option_key = sprintf('wp_cross_post_synced_term_%s_%s_%d', $site_data['id'], $taxonomy, $local_term_id);
+        $remote_id = get_option($option_key, null);
+        if ($remote_id !== null && $remote_id !== false) {
+            return (int)$remote_id;
+        }
+        return null;
     }
 
     /**
