@@ -132,6 +132,57 @@ class WP_Cross_Post_Database_Manager {
         
         return true;
     }
+
+    /**
+     * テーブル作成を強制実行（デバッグ用）
+     */
+    public static function force_create_taxonomy_table() {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'cross_post_site_taxonomies';
+        $charset_collate = $wpdb->get_charset_collate();
+        
+        // 既存テーブルを削除（強制再作成）
+        $wpdb->query("DROP TABLE IF EXISTS $table_name");
+        
+        $taxonomy_sql = "CREATE TABLE $table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            site_id bigint(20) unsigned NOT NULL,
+            taxonomy_type enum('category', 'post_tag') NOT NULL,
+            term_id bigint(20) unsigned NOT NULL,
+            term_name varchar(255) NOT NULL,
+            term_slug varchar(255) NOT NULL,
+            term_description text DEFAULT NULL,
+            parent_term_id bigint(20) unsigned DEFAULT NULL,
+            term_count int(11) DEFAULT 0,
+            term_data longtext DEFAULT NULL COMMENT 'JSON format term metadata',
+            last_synced datetime DEFAULT CURRENT_TIMESTAMP,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY unique_site_term (site_id, taxonomy_type, term_id),
+            KEY idx_site_taxonomy (site_id, taxonomy_type),
+            KEY idx_term_name (term_name),
+            KEY idx_term_slug (term_slug),
+            KEY idx_parent_term (parent_term_id),
+            KEY idx_last_synced (last_synced)
+        ) $charset_collate;";
+        
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        $result = dbDelta($taxonomy_sql);
+        
+        // テーブル作成確認
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'");
+        
+        if ($table_exists) {
+            error_log('[WP Cross Post] タクソノミーテーブルを強制作成しました: ' . $table_name);
+            return true;
+        } else {
+            error_log('[WP Cross Post] タクソノミーテーブルの強制作成に失敗しました: ' . $table_name);
+            error_log('[WP Cross Post] dbDelta結果: ' . print_r($result, true));
+            return false;
+        }
+    }
     
     /**
      * 外部キー制約の追加

@@ -95,6 +95,15 @@ if (!class_exists('WP_Cross_Post')) {
             // データベースのアップグレードチェック
             WP_Cross_Post_Database_Manager::maybe_upgrade_database();
             
+            // タクソノミーテーブルの存在確認と強制作成
+            global $wpdb;
+            $taxonomy_table = $wpdb->prefix . 'cross_post_site_taxonomies';
+            $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$taxonomy_table'");
+            if (!$table_exists) {
+                $this->debug_manager->log('タクソノミーテーブルが存在しません。強制作成を実行します。', 'warning');
+                WP_Cross_Post_Database_Manager::force_create_taxonomy_table();
+            }
+            
             // ハンドラークラスのインスタンス化
             // Autoloaderがクラスをロードするのを待つ
             if (!class_exists('WP_Cross_Post_API_Handler')) {
