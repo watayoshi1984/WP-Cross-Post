@@ -268,18 +268,8 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
         
         $tags = json_decode(wp_remote_retrieve_body($tags_response), true);
         
-        // 現在のタクソノミー情報を取得
-        $current_taxonomies = get_option('wp_cross_post_taxonomies', array());
-        
-        // サイトごとのタクソノミー情報を更新
-        $current_taxonomies[$site_data['id']] = array(
-            'categories' => $categories,
-            'tags' => $tags,
-            'last_updated' => current_time('mysql')
-        );
-        
-        // オプションを更新
-        update_option('wp_cross_post_taxonomies', $current_taxonomies);
+        // サブサイトのタクソノミーデータをカスタムテーブルに保存
+        $this->save_site_taxonomies_to_database($site_data['id'], $categories, $tags);
         
         // タクソノミー情報のキャッシュをクリア
         $this->clear_taxonomies_cache($site_data['id']);
@@ -294,68 +284,108 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
     }
 
     /**
-     * タクソノミータームをインポート
+     * サブサイトのタクソノミーデータをカスタムテーブルに保存
      */
-    private function import_taxonomy_term($term, $taxonomy, $site_name) {
-        try {
-            // サイト名をプレフィックスとして追加（名前のみ）
-            $term_name = $site_name . ' - ' . $term['name'];
-            
-            // スラッグは元のサイトのものをそのまま使用
-            $term_slug = $term['slug'];
-
-            // 既存の用語を検索
-            $existing_term = get_term_by('slug', $term_slug, $taxonomy);
-            
-            $term_args = array(
-                'name' => $term_name,
-                'slug' => $term_slug,
-                'description' => isset($term['description']['rendered']) ? $term['description']['rendered'] : 
-                               (isset($term['description']) ? $term['description'] : '')
-            );
-
-            // 親カテゴリーの処理
-            if ($taxonomy === 'category' && !empty($term['parent'])) {
-                $parent_term = get_term($term['parent'], $taxonomy);
-                if ($parent_term && !is_wp_error($parent_term)) {
-                    $term_args['parent'] = $parent_term->term_id;
-                }
+    private function save_site_taxonomies_to_database($site_id, $categories, $tags) {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'cross_post_site_taxonomies';
+        
+        // 既存のデータを削除
+        $wpdb->delete($table_name, array('site_id' => $site_id), array('%d'));
+        
+        // カテゴリーを保存
+        if (!empty($categories)) {
+            foreach ($categories as $category) {
+                $wpdb->insert(
+                    $table_name,
+                    array(
+                        'site_id' => $site_id,
+                        'taxonomy_type' => 'category',
+                        'term_id' => $category['id'],
+                        'term_name' => $category['name'],
+                        'term_slug' => $category['slug'],
+                        'term_description' => isset($category['description']) ? $category['description'] : '',
+                        'parent_term_id' => isset($category['parent']) && $category['parent'] > 0 ? $category['parent'] : null,
+                        'term_count' => isset($category['count']) ? $category['count'] : 0,
+                        'term_data' => json_encode($category),
+                        'last_synced' => current_time('mysql')
+                    ),
+                    array('%d', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%s', '%s')
+                );
             }
-
-            if ($existing_term) {
-                // 既存の用語を更新
-                $result = wp_update_term($existing_term->term_id, $taxonomy, $term_args);
-                $this->debug_manager->log(sprintf(
-                    'タクソノミーターム "%s"（スラッグ: %s）を更新 (%s)',
-                    $term_name,
-                    $term_slug,
-                    $taxonomy
-                ), 'info');
-            } else {
-                // 新しい用語を作成
-                $result = wp_insert_term($term_name, $taxonomy, $term_args);
-                $this->debug_manager->log(sprintf(
-                    'タクソノミーターム "%s"（スラッグ: %s）を作成 (%s)',
-                    $term_name,
-                    $term_slug,
-                    $taxonomy
-                ), 'info');
-            }
-
-            if (is_wp_error($result)) {
-                throw new Exception($result->get_error_message());
-            }
-
-            return $result;
-
-        } catch (Exception $e) {
-            $this->debug_manager->log(sprintf(
-                'タクソノミーターム "%s" の同期に失敗: %s',
-                $term_name,
-                $e->getMessage()
-            ), 'error');
-            return new WP_Error('term_import_failed', $e->getMessage());
         }
+        
+        // タグを保存
+        if (!empty($tags)) {
+            foreach ($tags as $tag) {
+                $wpdb->insert(
+                    $table_name,
+                    array(
+                        'site_id' => $site_id,
+                        'taxonomy_type' => 'post_tag',
+                        'term_id' => $tag['id'],
+                        'term_name' => $tag['name'],
+                        'term_slug' => $tag['slug'],
+                        'term_description' => isset($tag['description']) ? $tag['description'] : '',
+                        'parent_term_id' => null, // タグには親はない
+                        'term_count' => isset($tag['count']) ? $tag['count'] : 0,
+                        'term_data' => json_encode($tag),
+                        'last_synced' => current_time('mysql')
+                    ),
+                    array('%d', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%s', '%s')
+                );
+            }
+        }
+        
+        $this->debug_manager->log('サブサイトタクソノミーをカスタムテーブルに保存', 'info', array(
+            'site_id' => $site_id,
+            'category_count' => count($categories),
+            'tag_count' => count($tags)
+        ));
+    }
+    
+    /**
+     * カスタムテーブルからサブサイトのタクソノミーデータを取得
+     */
+    public function get_site_taxonomies_from_database($site_id) {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'cross_post_site_taxonomies';
+        
+        $results = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM $table_name WHERE site_id = %d ORDER BY taxonomy_type, term_name",
+                $site_id
+            ),
+            ARRAY_A
+        );
+        
+        $taxonomies = array(
+            'categories' => array(),
+            'tags' => array()
+        );
+        
+        foreach ($results as $row) {
+            $term_data = array(
+                'id' => $row['term_id'],
+                'name' => $row['term_name'],
+                'slug' => $row['term_slug'],
+                'description' => $row['term_description'],
+                'count' => $row['term_count']
+            );
+            
+            if ($row['taxonomy_type'] === 'category') {
+                if ($row['parent_term_id']) {
+                    $term_data['parent'] = $row['parent_term_id'];
+                }
+                $taxonomies['categories'][] = $term_data;
+            } else {
+                $taxonomies['tags'][] = $term_data;
+            }
+        }
+        
+        return $taxonomies;
     }
 
     /**
@@ -608,40 +638,17 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
                     throw new Exception('タクソノミー情報の取得に失敗: ' . $taxonomies->get_error_message());
                 }
 
-                // カテゴリーの同期
+                // カテゴリーとタグのカスタムテーブル保存
                 $category_count = 0;
-                if (!empty($taxonomies['categories'])) {
-                    foreach ($taxonomies['categories'] as $category) {
-                        $import_result = $this->import_taxonomy_term($category, 'category', $site['name']);
-                        if (!is_wp_error($import_result)) {
-                            $category_count++;
-                        } else {
-                            $this->debug_manager->log('カテゴリーの同期に失敗', 'warning', array(
-                                'site_id' => $site['id'],
-                                'site_name' => $site['name'],
-                                'term_name' => $category['name'],
-                                'error' => $import_result->get_error_message()
-                            ));
-                        }
-                    }
-                }
-
-                // タグの同期
                 $tag_count = 0;
+                
+                // サブサイトのタクソノミーデータをカスタムテーブルに保存
+                // メインサイトには作成せず、投稿時に直接使用します
+                if (!empty($taxonomies['categories'])) {
+                    $category_count = count($taxonomies['categories']);
+                }
                 if (!empty($taxonomies['tags'])) {
-                    foreach ($taxonomies['tags'] as $tag) {
-                        $import_result = $this->import_taxonomy_term($tag, 'post_tag', $site['name']);
-                        if (!is_wp_error($import_result)) {
-                            $tag_count++;
-                        } else {
-                            $this->debug_manager->log('タグの同期に失敗', 'warning', array(
-                                'site_id' => $site['id'],
-                                'site_name' => $site['name'],
-                                'term_name' => $tag['name'],
-                                'error' => $import_result->get_error_message()
-                            ));
-                        }
-                    }
+                    $tag_count = count($taxonomies['tags']);
                 }
 
                 $results['success_sites'][] = array(

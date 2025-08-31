@@ -300,7 +300,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         $results = array();
         foreach($selected_sites as $site_id) {
             $this->debug_manager->start_performance_monitoring('sync_to_site_' . $site_id);
-            $site_data = $this->get_site_data($site_id);
+            $site_data = $this->site_handler->get_site_data($site_id, true);
             if (!$site_data) {
                 $this->debug_manager->log('無効なサイトID: ' . $site_id, 'error', array(
                     'site_id' => $site_id
@@ -445,7 +445,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         }
 
         // サイトデータの取得
-        $site_data = $this->site_handler->get_site_data($site_id);
+        $site_data = $this->site_handler->get_site_data($site_id, true);
         if (!$site_data) {
             $this->debug_manager->log('無効なサイトID: ' . $site_id, 'error');
             return new WP_Error('invalid_site', '無効なサイトIDです。');
@@ -583,7 +583,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         
         // 各サイトに対して個別に非同期処理をスケジュール
         foreach($selected_sites as $site_id) {
-            $site_data = $this->site_handler->get_site_data($site_id);
+            $site_data = $this->site_handler->get_site_data($site_id, true);
             if (!$site_data) {
                 $this->debug_manager->log('無効なサイトID: ' . $site_id, 'error', array(
                     'site_id' => $site_id
@@ -628,7 +628,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
             $site_data = null;
             if (!empty($selected_sites)) {
                 $first_site_id = reset($selected_sites);
-                $site_data = $this->get_site_data($first_site_id);
+                $site_data = $this->site_handler->get_site_data($first_site_id, true);
             }
 
             // 投稿データの準備
@@ -1251,19 +1251,5 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         update_post_meta($local_post_id, '_wp_cross_post_sync_info', $sync_info);
     }
 
-    /**
-     * サイトIDに基づいてサイト情報を取得
-     *
-     * @param string $site_id サイトID
-     * @return array|null サイト情報、見つからない場合はnull
-     */
-    private function get_site_data($site_id) {
-        $sites = get_option('wp_cross_post_sites', array());
-        foreach ($sites as $site) {
-            if ($site['id'] === $site_id) {
-                return $site;
-            }
-        }
-        return null;
-    }
+
 }

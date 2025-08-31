@@ -31,16 +31,34 @@ jQuery(document).ready(function($) {
             var tags = resp.data.data.tags || [];
             var $catSel = $controls.find('.wp-cross-post-category');
             var $tagSel = $controls.find('.wp-cross-post-tags');
-            var currentCat = $catSel.data('selected');
-            var currentTags = $tagSel.data('selected') || [];
+            
+            // 既存の設定値を取得
+            var currentCat = $catSel.data('selected') || '';
+            var currentTagsData = $tagSel.data('selected') || '[]';
+            var currentTags = [];
+            
+            // タグの設定値をパース
+            try {
+                if (typeof currentTagsData === 'string') {
+                    currentTags = JSON.parse(currentTagsData);
+                } else if (Array.isArray(currentTagsData)) {
+                    currentTags = currentTagsData;
+                }
+            } catch (e) {
+                currentTags = [];
+            }
 
+            // カテゴリーのselectボックスを更新
             $catSel.empty().append('<option value="">未設定</option>');
             cats.forEach(function(c) {
                 var opt = $('<option/>').val(c.id).text(c.name);
-                if (String(currentCat) === String(c.id)) opt.attr('selected', 'selected');
+                if (String(currentCat) === String(c.id)) {
+                    opt.attr('selected', 'selected');
+                }
                 $catSel.append(opt);
             });
 
+            // タグのselectボックスを更新
             $tagSel.empty();
             tags.forEach(function(t) {
                 var opt = $('<option/>').val(t.id).text(t.name);

@@ -127,28 +127,14 @@ class WP_Cross_Post_Post_Data_Preparer implements WP_Cross_Post_Post_Data_Prepar
                 ));
             }
 
-            // カテゴリー情報の取得（ローカルIDを取得し、リモートIDにマッピング）
+            // カテゴリー情報の取得（サイト設定で指定されたものを使用）
             $categories = array();
-            $category_terms = wp_get_post_categories( $post->ID, array('fields' => 'all') );
-            if ( !is_wp_error( $category_terms ) ) {
-                foreach ( $category_terms as $term ) {
-                    $local_id = (int)$term->term_id;
-                    $remote_id = $this->map_remote_term_id($site_data, 'categories', $local_id);
-                    if ($remote_id !== null) {
-                        $categories[] = $remote_id;
-                    } else {
-                        $this->debug_manager->log('カテゴリーのリモートIDが見つからないため除外', 'warning', array(
-                            'post_id' => $post->ID,
-                            'local_term_id' => $local_id
-                        ));
-                    }
-                }
-                $this->debug_manager->log('カテゴリー情報を取得: ' . json_encode( $categories ), 'debug', array(
+            if (isset($site_settings['category']) && !empty($site_settings['category'])) {
+                $categories[] = intval($site_settings['category']);
+                $this->debug_manager->log('サイト設定からカテゴリーを取得: ' . $site_settings['category'], 'debug', array(
                     'post_id' => $post->ID,
-                    'category_count' => count($categories)
+                    'selected_category' => $site_settings['category']
                 ));
-            } else {
-                throw new Exception( 'カテゴリーの取得に失敗: ' . $category_terms->get_error_message() );
             }
             $post_data['categories'] = $categories;
 
@@ -158,14 +144,16 @@ class WP_Cross_Post_Post_Data_Preparer implements WP_Cross_Post_Post_Data_Prepar
             if ( !is_wp_error( $tag_terms ) ) {
                 foreach ( $tag_terms as $term ) {
                     $local_id = (int)$term->term_id;
-                    $remote_id = $this->map_remote_term_id($site_data, 'tags', $local_id);
-                    if ($remote_id !== null) {
-                        $tags[] = $remote_id;
-                    } else {
-                        $this->debug_manager->log('タグのリモートIDが見つからないため除外', 'warning', array(
-                            'post_id' => $post->ID,
-                            'local_term_id' => $local_id
-                        ));
+                    // サイト設定で指定されたタグIDを使用
+                    if (isset($site_settings['tags']) && is_array($site_settings['tags']) && in_array($local_id, $site_settings['tags'])) {
+                        $tags[] = $local_id;
+                    }
+                }
+            } else {
+                // サイト設定で指定されたタグを直接使用
+                if (isset($site_settings['tags']) && is_array($site_settings['tags'])) {
+                    foreach ($site_settings['tags'] as $tag_id) {
+                        $tags[] = intval($tag_id);
                     }
                 }
             }

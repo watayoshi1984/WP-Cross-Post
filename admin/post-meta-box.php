@@ -48,7 +48,9 @@ if (empty($sites)): ?>
 
                         <label>
                             カテゴリー
-                            <select name="wp_cross_post_setting[<?php echo esc_attr($sid); ?>][category]" class="wp-cross-post-category">
+                            <select name="wp_cross_post_setting[<?php echo esc_attr($sid); ?>][category]" 
+                                    class="wp-cross-post-category"
+                                    data-selected="<?php echo isset($conf['category']) ? esc_attr($conf['category']) : ''; ?>">
                                 <option value="">未設定</option>
                                 <!-- 動的にAJAXで追加 -->
                             </select>
@@ -56,7 +58,10 @@ if (empty($sites)): ?>
 
                         <label>
                             タグ
-                            <select name="wp_cross_post_setting[<?php echo esc_attr($sid); ?>][tags][]" class="wp-cross-post-tags" multiple>
+                            <select name="wp_cross_post_setting[<?php echo esc_attr($sid); ?>][tags][]" 
+                                    class="wp-cross-post-tags" 
+                                    multiple
+                                    data-selected="<?php echo isset($conf['tags']) && is_array($conf['tags']) ? esc_attr(json_encode($conf['tags'])) : '[]'; ?>">
                                 <!-- 動的にAJAXで追加 -->
                             </select>
                         </label>

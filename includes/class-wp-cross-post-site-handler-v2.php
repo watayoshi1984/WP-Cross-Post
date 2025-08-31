@@ -366,19 +366,27 @@ class WP_Cross_Post_Site_Handler_V2 implements WP_Cross_Post_Site_Handler_Interf
         
         if ($existing) {
             // 更新
+            $format = array('%d', '%s', '%d', '%s', '%s', '%s');
+            if ($remote_term_data) {
+                $format = array_merge($format, array('%d', '%s', '%s', '%s'));
+            }
             $result = $wpdb->update(
                 self::$table_taxonomy_mapping,
                 $mapping_data,
                 array('id' => $existing->id),
-                array('%d', '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s', '%s'),
+                $format,
                 array('%d')
             );
         } else {
             // 挿入
+            $format = array('%d', '%s', '%d', '%s', '%s', '%s');
+            if ($remote_term_data) {
+                $format = array_merge($format, array('%d', '%s', '%s', '%s'));
+            }
             $result = $wpdb->insert(
                 self::$table_taxonomy_mapping,
                 $mapping_data,
-                array('%d', '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s', '%s')
+                $format
             );
         }
         
@@ -428,32 +436,128 @@ class WP_Cross_Post_Site_Handler_V2 implements WP_Cross_Post_Site_Handler_Interf
      * 特定のタクソノミーを同期
      */
     private function sync_taxonomy_for_site($site_id, $taxonomy) {
-        // ローカルのタームを取得
-        $local_terms = get_terms(array(
-            'taxonomy' => $taxonomy,
-            'hide_empty' => false
-        ));
+        $site_data = $this->get_site_data($site_id, true);
+        if (!$site_data) {
+            return new WP_Error('site_not_found', 'サイトが見つかりません');
+        }
         
-        if (is_wp_error($local_terms)) {
-            return $local_terms;
+        $this->debug_manager->log("サイトID {$site_id} の {$taxonomy} を同期開始", 'info');
+        
+        // リモートサイトのタクソノミーを取得
+        $remote_terms = $this->fetch_remote_taxonomies($site_data, $taxonomy);
+        if (is_wp_error($remote_terms)) {
+            $this->debug_manager->log("リモートタクソノミー取得に失敗: " . $remote_terms->get_error_message(), 'error');
+            return $remote_terms;
         }
         
         $synced_count = 0;
+        $error_count = 0;
         
-        foreach ($local_terms as $term) {
-            $local_term_data = array(
-                'name' => $term->name,
-                'slug' => $term->slug,
-                'description' => $term->description
-            );
-            
-            // マッピングを保存（リモート同期は別途実装）
-            if ($this->save_taxonomy_mapping($site_id, $taxonomy, $term->term_id, $local_term_data)) {
-                $synced_count++;
+        // リモートのタームを処理
+        foreach ($remote_terms as $remote_term) {
+            try {
+                // ローカルに同名のタームが存在するかチェック
+                $local_term = get_term_by('name', $remote_term['name'], $taxonomy);
+                
+                if (!$local_term) {
+                    // 新しいタームを作成
+                    $new_term = wp_insert_term(
+                        $remote_term['name'],
+                        $taxonomy,
+                        array(
+                            'slug' => $remote_term['slug'],
+                            'description' => isset($remote_term['description']) ? $remote_term['description'] : ''
+                        )
+                    );
+                    
+                    if (is_wp_error($new_term)) {
+                        $this->debug_manager->log("ローカルターム作成に失敗: " . $new_term->get_error_message(), 'warning');
+                        $error_count++;
+                        continue;
+                    }
+                    
+                    $local_term_id = $new_term['term_id'];
+                } else {
+                    $local_term_id = $local_term->term_id;
+                }
+                
+                // マッピングを保存
+                $local_term_data = array(
+                    'name' => $remote_term['name'],
+                    'slug' => $remote_term['slug'],
+                    'description' => isset($remote_term['description']) ? $remote_term['description'] : ''
+                );
+                
+                $remote_term_data = array(
+                    'id' => $remote_term['id'],
+                    'name' => $remote_term['name'],
+                    'slug' => $remote_term['slug']
+                );
+                
+                if ($this->save_taxonomy_mapping($site_id, $taxonomy, $local_term_id, $local_term_data, $remote_term_data)) {
+                    $synced_count++;
+                } else {
+                    $error_count++;
+                }
+                
+            } catch (Exception $e) {
+                $this->debug_manager->log("タクソノミー同期エラー: " . $e->getMessage(), 'error');
+                $error_count++;
             }
         }
         
-        return array('synced' => $synced_count, 'total' => count($local_terms));
+        $this->debug_manager->log("タクソノミー同期完了 - 成功: {$synced_count}, エラー: {$error_count}", 'info');
+        
+        return array(
+            'synced' => $synced_count, 
+            'errors' => $error_count,
+            'total' => count($remote_terms)
+        );
+    }
+    
+    /**
+     * リモートサイトからタクソノミーを取得
+     */
+    private function fetch_remote_taxonomies($site_data, $taxonomy) {
+        $endpoint_map = array(
+            'category' => '/wp-json/wp/v2/categories',
+            'post_tag' => '/wp-json/wp/v2/tags'
+        );
+        
+        if (!isset($endpoint_map[$taxonomy])) {
+            return new WP_Error('invalid_taxonomy', '無効なタクソノミーです');
+        }
+        
+        $auth_header = $this->auth_manager->get_auth_header($site_data);
+        
+        $response = wp_remote_get(
+            $site_data['url'] . $endpoint_map[$taxonomy] . '?per_page=100',
+            array(
+                'timeout' => 30,
+                'headers' => array(
+                    'Authorization' => $auth_header
+                )
+            )
+        );
+        
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code !== 200) {
+            return new WP_Error(
+                'api_error',
+                "APIエラー: HTTP {$response_code}"
+            );
+        }
+        
+        $terms = json_decode(wp_remote_retrieve_body($response), true);
+        if (!is_array($terms)) {
+            return new WP_Error('invalid_response', '無効なレスポンス');
+        }
+        
+        return $terms;
     }
 
     /**
@@ -504,24 +608,42 @@ class WP_Cross_Post_Site_Handler_V2 implements WP_Cross_Post_Site_Handler_Interf
      * 手動同期用のAJAXハンドラー
      */
     public function ajax_sync_taxonomies() {
-        check_ajax_referer('wp_cross_post_ajax_nonce', 'nonce');
+        check_ajax_referer('wp_cross_post_taxonomy_sync', 'nonce');
         
         if (!current_user_can('manage_options')) {
-            wp_die('権限がありません。');
+            wp_send_json_error(array(
+                'message' => '権限がありません。',
+                'type' => 'error'
+            ));
         }
         
-        $site_id = isset($_POST['site_id']) ? intval($_POST['site_id']) : 0;
-        
-        if ($site_id > 0) {
-            $result = $this->sync_site_taxonomies($site_id);
-        } else {
+        try {
+            $this->debug_manager->start_performance_monitoring('ajax_sync_taxonomies_v2');
             $result = $this->sync_all_sites_taxonomies();
-        }
-        
-        if (is_wp_error($result)) {
-            wp_send_json_error($result->get_error_message());
-        } else {
-            wp_send_json_success($result);
+            $this->debug_manager->end_performance_monitoring('ajax_sync_taxonomies_v2');
+
+            if (is_wp_error($result)) {
+                throw new Exception($result->get_error_message());
+            }
+
+            update_option('wp_cross_post_last_sync_time', current_time('mysql'));
+            $this->debug_manager->log('wp_cross_post_last_sync_time updated', 'debug');
+            
+            // 詳細な同期結果をログに出力
+            $this->debug_manager->log('タクソノミー同期結果 (V2)', 'info', $result);
+            
+            wp_send_json_success(array(
+                'message' => 'カテゴリーとタグの同期が完了しました。',
+                'type' => 'success',
+                'details' => $result
+            ));
+
+        } catch (Exception $e) {
+            $this->debug_manager->log('タクソノミー同期でエラー (V2): ' . $e->getMessage(), 'error');
+            wp_send_json_error(array(
+                'message' => $e->getMessage(),
+                'type' => 'error'
+            ));
         }
     }
 
