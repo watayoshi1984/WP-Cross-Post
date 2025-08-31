@@ -134,6 +134,29 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
                 // 削除されたサイトのキャッシュをクリア
                 $this->clear_site_cache($site_id);
                 $this->clear_taxonomies_cache($site_id);
+
+                // タクソノミーオプションから該当サイトのデータを削除
+                $all_tax = get_option('wp_cross_post_taxonomies', array());
+                if (isset($all_tax[$site_id])) {
+                    unset($all_tax[$site_id]);
+                    update_option('wp_cross_post_taxonomies', $all_tax);
+                }
+
+                // 同期済みターム/メディアのマッピングオプションを削除（前方一致）
+                global $wpdb;
+                $like_term = $wpdb->esc_like('wp_cross_post_synced_term_' . $site_id . '_');
+                $like_media = $wpdb->esc_like('wp_cross_post_synced_media_' . $site_id . '_');
+                $options_table = $wpdb->options;
+                // term
+                $wpdb->query($wpdb->prepare(
+                    "DELETE FROM {$options_table} WHERE option_name LIKE %s",
+                    $like_term . '%'
+                ));
+                // media
+                $wpdb->query($wpdb->prepare(
+                    "DELETE FROM {$options_table} WHERE option_name LIKE %s",
+                    $like_media . '%'
+                ));
                 
                 $this->debug_manager->log('サイトを削除', 'info', array(
                     'site_id' => $site_id,
@@ -864,5 +887,40 @@ class WP_Cross_Post_Site_Handler implements WP_Cross_Post_Site_Handler_Interface
         }
         
         return $taxonomies;
+    }
+
+    /**
+     * 手動取得用AJAX: サイトのタクソノミーを返す
+     */
+    public function ajax_get_site_taxonomies() {
+        check_ajax_referer('wp_cross_post_taxonomy_fetch', 'nonce');
+
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error(array(
+                'message' => '権限がありません。',
+                'type' => 'error'
+            ));
+        }
+
+        $site_id = isset($_POST['site_id']) ? sanitize_text_field($_POST['site_id']) : '';
+        if (empty($site_id)) {
+            wp_send_json_error(array(
+                'message' => 'site_idが指定されていません。',
+                'type' => 'error'
+            ));
+        }
+
+        $tax = $this->get_cached_taxonomies($site_id);
+        if (is_wp_error($tax) || $tax === null) {
+            wp_send_json_error(array(
+                'message' => is_wp_error($tax) ? $tax->get_error_message() : 'タクソノミー取得に失敗しました。',
+                'type' => 'error'
+            ));
+        }
+
+        wp_send_json_success(array(
+            'type' => 'success',
+            'data' => $tax
+        ));
     }
 }

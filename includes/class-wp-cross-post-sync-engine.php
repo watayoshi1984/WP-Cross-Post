@@ -23,6 +23,8 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
     private $api_handler;
     private $post_data_preparer;
     private $rate_limit_manager;
+    private $media_sync_manager;
+    private $sync_history_manager;
 
     public function __construct(
         $auth_manager, 
@@ -32,7 +34,9 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
         $site_handler,
         $api_handler,
         $post_data_preparer,
-        $rate_limit_manager
+        $rate_limit_manager,
+        $media_sync_manager,
+        $sync_history_manager
     ) {
         $this->auth_manager = $auth_manager;
         $this->image_manager = $image_manager;
@@ -42,6 +46,8 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
         $this->api_handler = $api_handler;
         $this->post_data_preparer = $post_data_preparer;
         $this->rate_limit_manager = $rate_limit_manager;
+        $this->media_sync_manager = $media_sync_manager;
+        $this->sync_history_manager = $sync_history_manager;
     }
 
     /**
@@ -248,19 +254,44 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
                 continue;
             }
             
+            // 同期履歴レコードの作成
+            $sync_record_id = $this->sync_history_manager->create_sync_record(
+                $site['id'], 
+                $main_post->ID, 
+                'create', 
+                $main_post->post_status
+            );
+            
+            if (!$sync_record_id) {
+                $this->debug_manager->log('同期履歴レコードの作成に失敗', 'error', array(
+                    'site_id' => $site['id'],
+                    'post_id' => $main_post->ID
+                ));
+                continue;
+            }
+            
+            // 同期開始ステータスに更新
+            $this->sync_history_manager->update_sync_status($site['id'], $main_post->ID, 'syncing');
+            
             $this->debug_manager->log('サイトへの接続テストを開始', 'info', array(
-                'site_url' => $site['url']
+                'site_url' => $site['url'],
+                'sync_record_id' => $sync_record_id
             ));
             
             $test_result = $this->test_site_connection($site);
             if (!$test_result['success']) {
+                $error_message = $test_result['error'];
+                
                 $this->debug_manager->log('サイトへの接続テストに失敗', 'error', array(
                     'site_url' => $site['url'],
-                    'error' => $test_result['error']
+                    'error' => $error_message
                 ));
                 
+                // 同期履歴を失敗状態に更新
+                $this->sync_history_manager->update_sync_status($site['id'], $main_post->ID, 'failed', null, '接続失敗: ' . $error_message);
+                
                 $results[$site['id']] = $this->error_manager->handle_general_error(
-                    '接続失敗: ' . $test_result['error'], 
+                    '接続失敗: ' . $error_message, 
                     'connection_failed'
                 );
                 continue;
@@ -301,11 +332,28 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
             }
             
             if (is_wp_error($remote_post_id)) {
+                // 同期履歴を失敗状態に更新
+                $this->sync_history_manager->update_sync_status(
+                    $site['id'], 
+                    $main_post->ID, 
+                    'failed', 
+                    null, 
+                    $remote_post_id->get_error_message()
+                );
+                
                 $results[$site['id']] = $remote_post_id;
             } else {
+                // 同期履歴を成功状態に更新
+                $this->sync_history_manager->update_sync_status(
+                    $site['id'], 
+                    $main_post->ID, 
+                    'success', 
+                    $remote_post_id
+                );
+                
                 $results[$site['id']] = $remote_post_id;
                 
-                // 同期情報を保存
+                // 同期情報を保存（従来互換性のため残しておく）
                 $this->save_sync_info($main_post->ID, $site['id'], $remote_post_id);
             }
         }
@@ -930,5 +978,140 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
         }
         
         return $result;
+    }
+
+    /**
+     * 新しいテーブル構造を使用したメディア同期
+     */
+    private function sync_media_with_tracking($site, $media_list, $post_id) {
+        $sync_results = array();
+        
+        if (empty($media_list) || !is_array($media_list)) {
+            return $sync_results;
+        }
+        
+        foreach ($media_list as $media_id) {
+            // メディア同期レコードを作成
+            $media_attachment = get_post($media_id);
+            if (!$media_attachment) {
+                continue;
+            }
+            
+            $file_url = wp_get_attachment_url($media_id);
+            $file_size = filesize(get_attached_file($media_id));
+            $mime_type = get_post_mime_type($media_id);
+            
+            // 同期レコード作成
+            $record_id = $this->media_sync_manager->create_sync_record(
+                $site['id'],
+                $media_id,
+                $file_url,
+                $file_size,
+                $mime_type
+            );
+            
+            if ($record_id) {
+                // 同期中ステータスに更新
+                $this->media_sync_manager->update_sync_status($site['id'], $media_id, 'uploading');
+                
+                // 実際のメディア同期実行
+                $sync_result = $this->image_manager->sync_media($site, array($media_id), array($this, 'download_media'));
+                
+                if (is_wp_error($sync_result)) {
+                    // 失敗ステータスに更新
+                    $this->media_sync_manager->update_sync_status(
+                        $site['id'], 
+                        $media_id, 
+                        'failed', 
+                        null, 
+                        null, 
+                        $sync_result->get_error_message()
+                    );
+                } else {
+                    // 成功ステータスに更新
+                    $remote_media_id = is_array($sync_result) && isset($sync_result[0]) ? $sync_result[0] : $sync_result;
+                    $this->media_sync_manager->update_sync_status(
+                        $site['id'], 
+                        $media_id, 
+                        'success', 
+                        $remote_media_id, 
+                        $file_url
+                    );
+                }
+                
+                $sync_results[$media_id] = $sync_result;
+            }
+        }
+        
+        return $sync_results;
+    }
+
+    /**
+     * アイキャッチ画像の同期（新しいテーブル管理）
+     */
+    private function sync_featured_media_with_tracking($site, $featured_media_id, $post_id) {
+        if (!$featured_media_id) {
+            return null;
+        }
+        
+        // 既に同期済みかチェック
+        $existing_remote_id = $this->media_sync_manager->get_remote_media_id($site['id'], $featured_media_id);
+        if ($existing_remote_id) {
+            return array('remote_media_id' => $existing_remote_id);
+        }
+        
+        // メディア情報取得
+        $media_attachment = get_post($featured_media_id);
+        if (!$media_attachment) {
+            return null;
+        }
+        
+        $file_url = wp_get_attachment_url($featured_media_id);
+        $file_size = filesize(get_attached_file($featured_media_id));
+        $mime_type = get_post_mime_type($featured_media_id);
+        
+        // 同期レコード作成
+        $record_id = $this->media_sync_manager->create_sync_record(
+            $site['id'],
+            $featured_media_id,
+            $file_url,
+            $file_size,
+            $mime_type
+        );
+        
+        if (!$record_id) {
+            return null;
+        }
+        
+        // 同期中ステータスに更新
+        $this->media_sync_manager->update_sync_status($site['id'], $featured_media_id, 'uploading');
+        
+        // 実際のアイキャッチ画像同期実行
+        $sync_result = $this->image_manager->sync_featured_image($site, $featured_media_id, $post_id);
+        
+        if (is_wp_error($sync_result)) {
+            // 失敗ステータスに更新
+            $this->media_sync_manager->update_sync_status(
+                $site['id'], 
+                $featured_media_id, 
+                'failed', 
+                null, 
+                null, 
+                $sync_result->get_error_message()
+            );
+            return null;
+        } else {
+            // 成功ステータスに更新
+            $remote_media_id = isset($sync_result['id']) ? $sync_result['id'] : $sync_result;
+            $this->media_sync_manager->update_sync_status(
+                $site['id'], 
+                $featured_media_id, 
+                'success', 
+                $remote_media_id, 
+                $file_url
+            );
+            
+            return array('remote_media_id' => $remote_media_id);
+        }
     }
 }

@@ -71,7 +71,26 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         }
 
         $post_id = intval($_POST['post_id']);
-        $selected_sites = isset($_POST['selected_sites']) ? array_map('sanitize_text_field', $_POST['selected_sites']) : array();
+        $selected_sites = isset($_POST['selected_sites']) ? array_map('sanitize_text_field', (array) $_POST['selected_sites']) : array();
+        $per_site_settings = array();
+        if (isset($_POST['per_site_settings'])) {
+            // Sanitize nested array
+            $raw = $_POST['per_site_settings'];
+            if (is_array($raw)) {
+                foreach ($raw as $sid => $conf) {
+                    $sid_clean = sanitize_text_field($sid);
+                    $item = array();
+                    if (isset($conf['status'])) $item['status'] = sanitize_text_field($conf['status']);
+                    if (isset($conf['date'])) $item['date'] = sanitize_text_field($conf['date']);
+                    if (isset($conf['category'])) $item['category'] = sanitize_text_field($conf['category']);
+                    if (isset($conf['tags'])) {
+                        $tags = is_array($conf['tags']) ? array_map('sanitize_text_field', $conf['tags']) : array();
+                        $item['tags'] = $tags;
+                    }
+                    $per_site_settings[$sid_clean] = $item;
+                }
+            }
+        }
         // Robust boolean parsing: accept '1', 'true', 'on', 'yes' as true; '0', 'false', 'off', 'no' as false
         $parallel_sync = false;
         if (isset($_POST['parallel_sync'])) {
@@ -136,7 +155,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
             ));
             
             $this->debug_manager->start_performance_monitoring('sync_post_' . $post_id);
-            $result = $this->sync_post($post_id, $selected_sites);
+            $result = $this->sync_post($post_id, $selected_sites, $per_site_settings);
             $this->debug_manager->end_performance_monitoring('sync_post_' . $post_id);
         }
 
@@ -249,7 +268,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
         return $this->sync_to_single_site($post_id, $site_id);
     }
     
-    public function sync_post($post_id, $selected_sites) {
+    public function sync_post($post_id, $selected_sites, $per_site_settings = array()) {
         $this->debug_manager->log(sprintf(
             '投稿ID %d の同期を開始（対象サイト: %s）',
             $post_id,
@@ -303,6 +322,33 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
                 ));
                 $results[$site_id] = $test_result;
                 continue;
+            }
+
+            // UI でのサイト別設定を適用（REST準拠: リモートIDのみ）
+            if (is_array($per_site_settings) && isset($per_site_settings[$site_id])) {
+                $ps = $per_site_settings[$site_id];
+                // status/date
+                if (!empty($ps['status'])) {
+                    $post_data['status'] = $ps['status'];
+                    if ($ps['status'] === 'future' && !empty($ps['date'])) {
+                        $post_data['date'] = $ps['date'];
+                        $post_data['date_gmt'] = get_gmt_from_date($ps['date']);
+                    }
+                }
+                // category
+                if (!empty($ps['category']) && is_numeric($ps['category'])) {
+                    $post_data['categories'] = array( (int) $ps['category'] );
+                }
+                // tags
+                if (!empty($ps['tags']) && is_array($ps['tags'])) {
+                    $tag_ids = array();
+                    foreach ($ps['tags'] as $tid) {
+                        if (is_numeric($tid)) $tag_ids[] = (int) $tid;
+                    }
+                    if (!empty($tag_ids)) {
+                        $post_data['tags'] = $tag_ids;
+                    }
+                }
             }
 
             // アイキャッチ画像の同期
@@ -471,7 +517,7 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
             return $rate_limit_result;
         }
         
-        // 投稿の同期
+        // 投稿の同期（REST準拠: API側でcategories/tagsの型正規化・未設定時のフォールバックあり）
         $remote_post_id = $this->api_handler->sync_post($site_data, $post_data);
         
         if (!is_wp_error($remote_post_id)) {
@@ -634,29 +680,22 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
                 $this->debug_manager->log('スラッグを自動生成: ' . $post_data['slug'], 'info');
             }
 
-            // カテゴリー情報の取得（スラッグとIDの両方を送信）
-            $categories = array();
-            $category_terms = wp_get_post_categories( $post->ID, array('fields' => 'all') );
-            if ( !is_wp_error( $category_terms ) ) {
-                foreach ( $category_terms as $term ) {
-                    $categories[] = $term->term_id;
-                }
-                $this->debug_manager->log('カテゴリー情報を取得: ' . json_encode( $categories ), 'debug');
-            } else {
+            // カテゴリーはREST準拠のため、ここではローカルIDを送らない（API側のフォールバックに委ねる）
+            $category_terms = wp_get_post_categories( $post->ID, array('fields' => 'ids') );
+            if ( is_wp_error( $category_terms ) ) {
                 throw new Exception( 'カテゴリーの取得に失敗: ' . $category_terms->get_error_message() );
             }
-            $post_data['categories'] = $categories;
+            // 未設定として空配列。UIやAPI側でリモートID解決/生成を行う
+            $post_data['categories'] = array();
 
-            // タグの取得（スラッグとIDの両方を送信）
-            $tags = array();
-            $tag_terms = wp_get_post_tags( $post->ID, array('fields' => 'all') );
-            if ( !is_wp_error( $tag_terms ) ) {
-                foreach ( $tag_terms as $term ) {
-                    $tags[] = $term->term_id;
-                }
+            // タグも同様にローカルIDは送らない（REST準拠）。未設定として空配列
+            $tag_terms = wp_get_post_tags( $post->ID, array('fields' => 'ids') );
+            if ( is_wp_error( $tag_terms ) ) {
+                // タグ無しでも続行
+                $this->debug_manager->log('タグの取得に失敗: ' . $tag_terms->get_error_message(), 'warning');
             }
-            $post_data['tags'] = $tags;
-            $this->debug_manager->log('タグ情報を取得', 'debug');
+            $post_data['tags'] = array();
+            $this->debug_manager->log('カテゴリ/タグはUIまたはAPI側で解決するため空で送信', 'debug');
 
             // アイキャッチ画像の処理を追加
             $thumbnail_id = get_post_thumbnail_id( $post->ID );

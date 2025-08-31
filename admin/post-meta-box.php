@@ -1,10 +1,16 @@
 <?php
 wp_nonce_field('wp_cross_post_sync', 'wp_cross_post_nonce');
 
-$sites = get_option('wp_cross_post_sites', array());
+// $sites変数はrender_post_meta_box()メソッドから渡される
 $selected_sites = get_post_meta($post->ID, '_wp_cross_post_sites', true);
 if (!is_array($selected_sites)) {
     $selected_sites = array();
+}
+
+// 既存のサイト別設定（カテゴリー/タグ/ステータス/日時）を読み込み
+$site_settings = get_post_meta($post->ID, '_wp_cross_post_site_settings', true);
+if (!is_array($site_settings)) {
+    $site_settings = array();
 }
 
 if (empty($sites)): ?>
@@ -13,14 +19,49 @@ if (empty($sites)): ?>
     <div class="wp-cross-post-meta-box">
         <div class="sites-list">
             <?php foreach ($sites as $site): ?>
-                <label class="site-item">
-                    <input type="checkbox" 
-                           name="wp_cross_post_sites[]" 
-                           value="<?php echo esc_attr($site['id']); ?>"
-                           <?php checked(in_array($site['id'], $selected_sites)); ?>>
-                    <?php echo esc_html($site['name']); ?>
-                    <span class="site-url"><?php echo esc_html($site['url']); ?></span>
-                </label>
+                <?php $sid = $site['id']; $conf = isset($site_settings[$sid]) && is_array($site_settings[$sid]) ? $site_settings[$sid] : array(); ?>
+                <div class="site-item">
+                    <label>
+                        <input type="checkbox" 
+                               name="wp_cross_post_sites[]" 
+                               value="<?php echo esc_attr($sid); ?>"
+                               <?php checked(in_array($sid, $selected_sites)); ?>>
+                        <?php echo esc_html($site['name']); ?>
+                        <span class="site-url"><?php echo esc_html($site['url']); ?></span>
+                    </label>
+
+                    <div class="site-controls" data-site-id="<?php echo esc_attr($sid); ?>">
+                        <label>
+                            投稿状態
+                            <select name="wp_cross_post_setting[<?php echo esc_attr($sid); ?>][status]" class="wp-cross-post-status">
+                                <option value="">未設定</option>
+                                <option value="publish" <?php selected(isset($conf['status']) && $conf['status']==='publish'); ?>>公開</option>
+                                <option value="draft" <?php selected(isset($conf['status']) && $conf['status']==='draft'); ?>>下書き</option>
+                                <option value="future" <?php selected(isset($conf['status']) && $conf['status']==='future'); ?>>予約投稿</option>
+                            </select>
+                        </label>
+
+                        <label class="scheduled-time" style="display: <?php echo (isset($conf['status']) && $conf['status']==='future') ? 'block' : 'none'; ?>;">
+                            投稿日時
+                            <input type="datetime-local" name="wp_cross_post_setting[<?php echo esc_attr($sid); ?>][date]" value="<?php echo isset($conf['date']) ? esc_attr($conf['date']) : ''; ?>">
+                        </label>
+
+                        <label>
+                            カテゴリー
+                            <select name="wp_cross_post_setting[<?php echo esc_attr($sid); ?>][category]" class="wp-cross-post-category">
+                                <option value="">未設定</option>
+                                <!-- 動的にAJAXで追加 -->
+                            </select>
+                        </label>
+
+                        <label>
+                            タグ
+                            <select name="wp_cross_post_setting[<?php echo esc_attr($sid); ?>][tags][]" class="wp-cross-post-tags" multiple>
+                                <!-- 動的にAJAXで追加 -->
+                            </select>
+                        </label>
+                    </div>
+                </div>
             <?php endforeach; ?>
         </div>
 
@@ -65,6 +106,8 @@ if (empty($sites)): ?>
         display: block;
         margin: 8px 0;
     }
+    .site-item > label { display:flex; flex-direction:column; }
+    .site-controls { margin:8px 0 12px 20px; display:flex; flex-direction:column; gap:8px; }
     .site-url {
         display: block;
         margin-left: 20px;

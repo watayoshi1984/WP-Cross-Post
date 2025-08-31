@@ -87,33 +87,166 @@ WordPressのアップデートにより、以下の機能が影響を受けて�
    - レート制限対策の共通クラス作成
    - 各クラスでのレート制限対策統一
 
-### 今後の開発計画
+## データベース設計
 
-#### 第1段階：機能の改善と拡張（2-3週間）
+### カスタムテーブル構成
 
-1. サイトハンドラークラスの未実装メソッドの実装
-2. 同期エンジンクラスの機能拡充
-3. エラーハンドリングの強化
-4. 並列処理の実装
-5. キャッシュ機構の導入
-6. 非同期処理の導入
-7. 設定の外部化
-=======
+プラグインバージョン1.1.0から、従来のwp_optionsテーブルによるデータ管理から、パフォーマンスとスケーラビリティを向上させるカスタムテーブル設計に移行しました。
 
-#### 第2段階：テストとリリース（2週間）
+### ER図
 
-1. 総合的なテストとバグ修正
-2. ドキュメントの更新
-3. 新バージョンのリリース
+```mermaid
+erDiagram
+    cross_post_sites {
+        bigint id PK "AUTO_INCREMENT"
+        varchar site_key UK "ユニークキー"
+        varchar name "サイト名"
+        varchar url "サイトURL"
+        varchar username "ユーザー名"
+        text app_password "アプリケーションパスワード(暗号化)"
+        enum status "ステータス(active/inactive)"
+        datetime created_at "作成日時"
+        datetime updated_at "更新日時"
+    }
 
-## リスクと注意点
+    cross_post_taxonomy_mapping {
+        bigint id PK "AUTO_INCREMENT"
+        bigint site_id FK "サイトID"
+        varchar local_taxonomy "ローカルタクソノミー"
+        bigint local_term_id "ローカルタームID"
+        varchar local_term_name "ローカルターム名"
+        varchar local_term_slug "ローカルタームスラッグ"
+        bigint remote_term_id "リモートタームID"
+        varchar remote_term_name "リモートターム名"
+        varchar remote_term_slug "リモートタームスラッグ"
+        enum sync_status "同期ステータス(pending/synced/failed)"
+        datetime last_synced "最終同期日時"
+        text error_message "エラーメッセージ"
+        datetime created_at "作成日時"
+        datetime updated_at "更新日時"
+    }
 
-1. 現在の環境でプラグインが完全に動作しない可能性があるため、復元作業には時間がかかる
-2. WordPressのアップデートによる非互換性が広範囲にわたる可能性がある
-3. セキュリティ関連の変更に対応する必要がある
+    cross_post_media_sync {
+        bigint id PK "AUTO_INCREMENT"
+        bigint site_id FK "サイトID"
+        bigint local_media_id "ローカルメディアID"
+        varchar local_file_url "ローカルファイルURL"
+        bigint remote_media_id "リモートメディアID"
+        varchar remote_file_url "リモートファイルURL"
+        bigint file_size "ファイルサイズ"
+        varchar mime_type "MIMEタイプ"
+        enum sync_status "同期ステータス(pending/uploading/success/failed)"
+        datetime synced_at "同期日時"
+        text error_message "エラーメッセージ"
+        int retry_count "リトライ回数"
+        datetime created_at "作成日時"
+        datetime updated_at "更新日時"
+    }
 
-## 結論
+    cross_post_sync_history {
+        bigint id PK "AUTO_INCREMENT"
+        bigint site_id FK "サイトID"
+        bigint local_post_id "ローカル投稿ID"
+        bigint remote_post_id "リモート投稿ID"
+        enum sync_status "同期ステータス(pending/syncing/success/failed)"
+        enum sync_type "同期タイプ(create/update/delete)"
+        varchar post_status "投稿ステータス"
+        datetime scheduled_date "予約投稿日時"
+        datetime synced_at "同期日時"
+        text error_message "エラーメッセージ"
+        int retry_count "リトライ回数"
+        longtext sync_data "同期設定データ(JSON)"
+        datetime created_at "作成日時"
+        datetime updated_at "更新日時"
+    }
 
-WP Cross Postプラグインは、WordPressアップデートによる非互換性により動作しなくなっていました。これらの問題を解決するため、プラグインをWordPress 6.5に対応させ、アプリケーションパスワード機能の変更やREST APIの最新仕様に対応しました。これにより、プラグインは正常に動作するようになりました。さらに、コードの品質と保守性を向上させるためのリファクタリングも実施し、すべての計画された改善が完了しました。依存注入パターンの導入、インターフェースの導入検討、ログレベルの適切な設定、ログ出力内容の詳細化、並列処理の導入検討、レート制限対策の共通クラス作成と統一を実施し、保守性、拡張性、パフォーマンス、信頼性を向上させました。
-=======
-WP Cross Postプラグインは、WordPressアップデートによる非互換性により動作しなくなっていました。これらの問題を解決するため、プラグインをWordPress 6.5に対応させ、アプリケーションパスワード機能の変更やREST APIの最新仕様に対応しました。これにより、プラグインは正常に動作するようになりました。
+    cross_post_sites ||--o{ cross_post_taxonomy_mapping : "1つのサイトは複数のタクソノミーマッピングを持つ"
+    cross_post_sites ||--o{ cross_post_media_sync : "1つのサイトは複数のメディア同期を持つ"
+    cross_post_sites ||--o{ cross_post_sync_history : "1つのサイトは複数の同期履歴を持つ"
+```
+
+### テーブル詳細仕様
+
+#### 1. cross_post_sites（サイト情報テーブル）
+**目的**: 同期先サイトの基本情報を管理
+
+- **主要インデックス**: 
+  - PRIMARY KEY (`id`)
+  - UNIQUE KEY (`site_key`)
+  - INDEX (`status`, `name`)
+
+- **特徴**:
+  - app_passwordは暗号化して保存
+  - site_keyで重複防止
+  - statusによるアクティブ/非アクティブ管理
+
+#### 2. cross_post_taxonomy_mapping（タクソノミーマッピングテーブル）
+**目的**: ローカルとリモートサイト間のカテゴリー・タグのマッピング管理
+
+- **主要インデックス**:
+  - PRIMARY KEY (`id`)
+  - UNIQUE KEY (`site_id`, `local_taxonomy`, `local_term_id`)
+  - INDEX (`site_id`, `local_taxonomy`)
+  - INDEX (`sync_status`)
+
+- **特徴**:
+  - category/post_tagの両方に対応
+  - 同期ステータスによる管理
+  - エラーメッセージの保存
+
+#### 3. cross_post_media_sync（メディア同期履歴テーブル）
+**目的**: 画像・メディアファイルの同期状況管理
+
+- **主要インデックス**:
+  - PRIMARY KEY (`id`)
+  - UNIQUE KEY (`site_id`, `local_media_id`)
+  - INDEX (`sync_status`)
+  - INDEX (`remote_media_id`)
+
+- **特徴**:
+  - アップロード進行状況の追跡
+  - リトライ機能の実装
+  - ファイルサイズ・MIMEタイプの記録
+
+#### 4. cross_post_sync_history（投稿同期履歴テーブル）
+**目的**: 投稿の同期履歴と設定情報の管理
+
+- **主要インデックス**:
+  - PRIMARY KEY (`id`)
+  - UNIQUE KEY (`site_id`, `local_post_id`)
+  - INDEX (`sync_status`, `sync_type`)
+  - INDEX (`scheduled_date`)
+
+- **特徴**:
+  - 予約投稿対応
+  - JSON形式での詳細設定保存
+  - CRUD操作の完全追跡
+
+### パフォーマンス最適化
+
+#### インデックス戦略
+- **複合インデックス**: 頻繁にWHERE句で使用される組み合わせ
+- **ユニークインデックス**: データ整合性の保証
+- **外部キー制約**: 参照整合性の自動管理
+
+#### キャッシュ戦略
+- **WordPressオブジェクトキャッシュ**: 頻繁にアクセスするサイト情報
+- **トランジェントAPI**: タクソノミー情報の一時キャッシュ
+- **キャッシュ無効化**: データ更新時の適切なキャッシュクリア
+
+#### クエリ最適化
+- **JOIN最適化**: 関連データの効率的な取得
+- **LIMIT/OFFSET**: 大量データのページング対応
+- **インデックスヒント**: 複雑なクエリでのパフォーマンス向上
+
+### 従来方式との比較
+
+| 項目 | 従来(wp_options) | 新方式(カスタムテーブル) |
+|------|------------------|-------------------------|
+| パフォーマンス | オプション数増加で低下 | インデックスで高速化 |
+| スケーラビリティ | 制限あり | 数千件対応可能 |
+| データ整合性 | 手動管理 | 外部キー制約で自動 |
+| 検索性能 | LIKE検索で低速 | インデックス検索で高速 |
+| メンテナンス性 | 複雑なパターンマッチ | 構造化されたクエリ |
+| バックアップ | 標準WordPressツール | 追加考慮が必要 |
+

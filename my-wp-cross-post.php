@@ -1,9 +1,9 @@
 <?php
 /**
  * Plugin Name: WP Cross Post
- * Plugin URI: https://yamaoku-seo.com/wp-cross-post
+ * Plugin URI: https://github.com/watayoshi1984/WP-Cross-Post.git
  * Description: WordPressサイト間で記事を同期するプラグイン。カテゴリーとタグの自動同期、マテリアルデザインUI、REST API v2対応。
- * Version: 1.1.0
+ * Version: 1.2.0
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: watayoshi
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 
 // 既に定数が定義されている場合は、再定義しない
 if (!defined('WP_CROSS_POST_VERSION')) {
-    define('WP_CROSS_POST_VERSION', '1.1.0');
+    define('WP_CROSS_POST_VERSION', '1.2.0');
 }
 if (!defined('WP_CROSS_POST_PLUGIN_DIR')) {
     define('WP_CROSS_POST_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -36,9 +36,12 @@ if (!class_exists('WP_Cross_Post')) {
     
     // 必要なクラスファイルを手動で読み込む
     $required_classes = array(
+        'WP_Cross_Post_Database_Manager' => WP_CROSS_POST_PLUGIN_DIR . 'includes/class-wp-cross-post-database-manager.php',
+        'WP_Cross_Post_Media_Sync_Manager' => WP_CROSS_POST_PLUGIN_DIR . 'includes/class-wp-cross-post-media-sync-manager.php',
+        'WP_Cross_Post_Sync_History_Manager' => WP_CROSS_POST_PLUGIN_DIR . 'includes/class-wp-cross-post-sync-history-manager.php',
         'WP_Cross_Post_API_Handler' => WP_CROSS_POST_PLUGIN_DIR . 'includes/class-wp-cross-post-api-handler.php',
         'WP_Cross_Post_Sync_Handler' => WP_CROSS_POST_PLUGIN_DIR . 'includes/class-wp-cross-post-sync-handler.php',
-        'WP_Cross_Post_Site_Handler' => WP_CROSS_POST_PLUGIN_DIR . 'includes/class-wp-cross-post-site-handler.php',
+        'WP_Cross_Post_Site_Handler_V2' => WP_CROSS_POST_PLUGIN_DIR . 'includes/class-wp-cross-post-site-handler-v2.php',
         'WP_Cross_Post_Sync_Engine' => WP_CROSS_POST_PLUGIN_DIR . 'includes/class-wp-cross-post-sync-engine.php'
     );
     
@@ -65,6 +68,8 @@ if (!class_exists('WP_Cross_Post')) {
         private $error_manager;
         private $rate_limit_manager;
         private $sync_engine;
+        private $media_sync_manager;
+        private $sync_history_manager;
 
         public function __construct() {
             // マネージャークラスのインスタンス化
@@ -76,12 +81,19 @@ if (!class_exists('WP_Cross_Post')) {
             $this->error_manager = WP_Cross_Post_Error_Manager::get_instance();
             $this->rate_limit_manager = WP_Cross_Post_Rate_Limit_Manager::get_instance();
             
+            // 新しいマネージャークラスのインスタンス化
+            $this->media_sync_manager = new WP_Cross_Post_Media_Sync_Manager($this->debug_manager, $this->error_manager);
+            $this->sync_history_manager = new WP_Cross_Post_Sync_History_Manager($this->debug_manager, $this->error_manager);
+            
             // 依存関係の設定
             $this->error_manager->set_dependencies($this->debug_manager);
             $this->image_manager->set_dependencies($this->debug_manager, $this->auth_manager, $this->rate_limit_manager);
             $this->post_data_preparer->set_dependencies($this->debug_manager, $this->block_content_processor);
             $this->block_content_processor->set_dependencies($this->debug_manager, $this->image_manager);
             $this->rate_limit_manager->set_dependencies($this->debug_manager, $this->error_manager);
+            
+            // データベースのアップグレードチェック
+            WP_Cross_Post_Database_Manager::maybe_upgrade_database();
             
             // ハンドラークラスのインスタンス化
             // Autoloaderがクラスをロードするのを待つ
@@ -90,8 +102,8 @@ if (!class_exists('WP_Cross_Post')) {
                 return;
             }
             
-            if (!class_exists('WP_Cross_Post_Site_Handler')) {
-                $this->debug_manager->log('WP_Cross_Post_Site_Handler クラスが読み込まれていません。', 'error');
+            if (!class_exists('WP_Cross_Post_Site_Handler_V2')) {
+                $this->debug_manager->log('WP_Cross_Post_Site_Handler_V2 クラスが読み込まれていません。', 'error');
                 return;
             }
             
@@ -106,8 +118,8 @@ if (!class_exists('WP_Cross_Post')) {
             }
             
             $this->api_handler = new WP_Cross_Post_API_Handler($this->debug_manager, $this->auth_manager, $this->error_manager, $this->rate_limit_manager);
-            $this->site_handler = new WP_Cross_Post_Site_Handler($this->debug_manager, $this->auth_manager, $this->error_manager, $this->api_handler, $this->rate_limit_manager);
-            $this->sync_engine = new WP_Cross_Post_Sync_Engine($this->auth_manager, $this->image_manager, $this->error_manager, $this->debug_manager, $this->site_handler, $this->api_handler, $this->post_data_preparer, $this->rate_limit_manager);
+            $this->site_handler = new WP_Cross_Post_Site_Handler_V2($this->debug_manager, $this->auth_manager, $this->error_manager, $this->api_handler, $this->rate_limit_manager);
+            $this->sync_engine = new WP_Cross_Post_Sync_Engine($this->auth_manager, $this->image_manager, $this->error_manager, $this->debug_manager, $this->site_handler, $this->api_handler, $this->post_data_preparer, $this->rate_limit_manager, $this->media_sync_manager, $this->sync_history_manager);
             $this->sync_handler = new WP_Cross_Post_Sync_Handler($this->api_handler, $this->debug_manager, $this->site_handler, $this->auth_manager, $this->image_manager, $this->post_data_preparer, $this->error_manager, $this->rate_limit_manager);
             $this->error_handler = new WP_Cross_Post_Error_Handler();
 
@@ -132,6 +144,8 @@ if (!class_exists('WP_Cross_Post')) {
             add_action('wp_ajax_wp_cross_post_export_settings', array($this, 'ajax_export_settings'));
             add_action('wp_ajax_wp_cross_post_import_settings', array($this, 'ajax_import_settings'));
             add_action('wp_ajax_wp_cross_post_update_notification_settings', array($this, 'ajax_update_notification_settings'));
+            // Taxonomies fetch for post editor UI
+            add_action('wp_ajax_wp_cross_post_get_site_taxonomies', array($this->site_handler, 'ajax_get_site_taxonomies'));
 
             // 定期実行のフック
             add_action('wp_cross_post_daily_sync', array($this->site_handler, 'sync_all_sites_taxonomies'));
@@ -394,6 +408,13 @@ if (!class_exists('WP_Cross_Post')) {
                         WP_CROSS_POST_VERSION,
                         true
                     );
+
+                    // Localize data for post editor script
+                    wp_localize_script('wp-cross-post-post', 'wpCrossPostData', array(
+                        'ajaxurl' => admin_url('admin-ajax.php'),
+                        'nonce' => wp_create_nonce('wp_cross_post_sync'),
+                        'taxonomyFetchNonce' => wp_create_nonce('wp_cross_post_taxonomy_fetch')
+                    ));
                 }
             }
         }
@@ -410,6 +431,10 @@ if (!class_exists('WP_Cross_Post')) {
         }
 
         public function render_post_meta_box($post) {
+            // 新しいSite_Handler_V2からサイト情報を取得
+            $sites = $this->site_handler->get_sites();
+            
+            // メタボックステンプレートに変数を渡す
             include WP_CROSS_POST_PLUGIN_DIR . 'admin/post-meta-box.php';
         }
 
@@ -430,8 +455,25 @@ if (!class_exists('WP_Cross_Post')) {
             }
 
             // 同期先サイトの保存
-            $selected_sites = isset($_POST['wp_cross_post_sites']) ? array_map('sanitize_text_field', $_POST['wp_cross_post_sites']) : array();
+            $selected_sites = isset($_POST['wp_cross_post_sites']) ? array_map('sanitize_text_field', (array) $_POST['wp_cross_post_sites']) : array();
             update_post_meta($post_id, '_wp_cross_post_sites', $selected_sites);
+
+            // サイト別設定の保存（status, date, category, tags）
+            $site_settings = isset($_POST['wp_cross_post_setting']) && is_array($_POST['wp_cross_post_setting']) ? $_POST['wp_cross_post_setting'] : array();
+            $clean = array();
+            foreach ($site_settings as $sid => $conf) {
+                $sid_clean = sanitize_text_field($sid);
+                $item = array();
+                if (isset($conf['status'])) { $item['status'] = sanitize_text_field($conf['status']); }
+                if (isset($conf['date'])) { $item['date'] = sanitize_text_field($conf['date']); }
+                if (isset($conf['category'])) { $item['category'] = sanitize_text_field($conf['category']); }
+                if (isset($conf['tags'])) {
+                    $tags = is_array($conf['tags']) ? array_map('sanitize_text_field', $conf['tags']) : array();
+                    $item['tags'] = $tags;
+                }
+                $clean[$sid_clean] = $item;
+            }
+            update_post_meta($post_id, '_wp_cross_post_site_settings', $clean);
         }
 
         public function render_settings_page() {
@@ -443,6 +485,9 @@ if (!class_exists('WP_Cross_Post')) {
         }
 
         public function activate() {
+            // カスタムテーブルの作成
+            WP_Cross_Post_Database_Manager::create_tables();
+            
             // 毎日午前3時にタクソノミーの自動同期をスケジュール
             if (!wp_next_scheduled('wp_cross_post_daily_sync')) {
                 wp_schedule_event(strtotime('tomorrow 03:00'), 'daily', 'wp_cross_post_daily_sync');
