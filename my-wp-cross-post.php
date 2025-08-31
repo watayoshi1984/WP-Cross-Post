@@ -3,7 +3,7 @@
  * Plugin Name: WP Cross Post
  * Plugin URI: https://github.com/watayoshi1984/WP-Cross-Post.git
  * Description: WordPressサイト間で記事を同期するプラグイン。カテゴリーとタグの自動同期、マテリアルデザインUI、REST API v2対応。
- * Version: 1.2.3
+ * Version: 1.2.4
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: watayoshi
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 
 // 既に定数が定義されている場合は、再定義しない
 if (!defined('WP_CROSS_POST_VERSION')) {
-    define('WP_CROSS_POST_VERSION', '1.2.3');
+    define('WP_CROSS_POST_VERSION', '1.2.4');
 }
 if (!defined('WP_CROSS_POST_PLUGIN_DIR')) {
     define('WP_CROSS_POST_PLUGIN_DIR', plugin_dir_path(__FILE__));

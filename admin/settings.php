@@ -52,7 +52,8 @@ if ($_POST && isset($_POST['wp_cross_post_add_site_nonce'])) {
             'app_password' => sanitize_text_field($_POST['app_password'])
         );
         
-        $site_handler = new WP_Cross_Post_Site_Handler();
+        global $wp_cross_post;
+        $site_handler = $wp_cross_post->site_handler;
         $result = $site_handler->add_site($site_data);
         
         if (!is_wp_error($result)) {
@@ -109,6 +110,93 @@ if ($_POST && isset($_POST['wp_cross_post_notification_settings_nonce'])) {
         add_action('admin_notices', function() {
             echo '<div class="notice notice-success is-dismissible"><p>エラー通知設定を保存しました。</p></div>';
         });
+    }
+}
+
+// 強制キャッシュクリア処理
+if ($_POST && isset($_POST['wp_cross_post_force_cache_clear_nonce'])) {
+    if (wp_verify_nonce($_POST['wp_cross_post_force_cache_clear_nonce'], 'wp_cross_post_force_cache_clear')) {
+        global $wp_cross_post;
+        
+        // 全キャッシュをクリア
+        wp_cache_flush();
+        
+        // WP Cross Post関連のキャッシュキーをクリア
+        $cache_keys = array(
+            'wp_cross_post_all_sites',
+            'wp_cross_post_settings',
+            'wp_cross_post_taxonomy_mapping'
+        );
+        
+        foreach ($cache_keys as $key) {
+            wp_cache_delete($key);
+        }
+        
+        // トランジェントキャッシュもクリア
+        delete_transient('wp_cross_post_site_list');
+        delete_transient('wp_cross_post_taxonomy_cache');
+        delete_transient('wp_cross_post_media_cache');
+        
+        // Site_Handler V2のキャッシュもクリア
+        if (method_exists($wp_cross_post->site_handler, 'clear_all_cache')) {
+            $wp_cross_post->site_handler->clear_all_cache();
+        }
+        
+        add_action('admin_notices', function() {
+            echo '<div class="notice notice-success is-dismissible"><p>全キャッシュをクリアしました。</p></div>';
+        });
+    }
+}
+
+// ゴーストサイト強制削除処理
+if ($_POST && isset($_POST['wp_cross_post_remove_ghost_sites_nonce'])) {
+    if (wp_verify_nonce($_POST['wp_cross_post_remove_ghost_sites_nonce'], 'wp_cross_post_remove_ghost_sites')) {
+        global $wpdb, $wp_cross_post;
+        
+        // データベースから全サイトを取得
+        $sites_table = $wpdb->prefix . 'cross_post_sites';
+        $sites = $wpdb->get_results("SELECT * FROM $sites_table", ARRAY_A);
+        
+        $removed_count = 0;
+        $failed_sites = array();
+        
+        foreach ($sites as $site) {
+            // 接続テストを実行
+            $test_result = $wp_cross_post->api_handler->test_connection($site);
+            
+            if (is_wp_error($test_result)) {
+                // 接続できないサイトは削除対象
+                $result = $wpdb->delete(
+                    $sites_table,
+                    array('id' => $site['id']),
+                    array('%d')
+                );
+                
+                if ($result !== false) {
+                    $removed_count++;
+                } else {
+                    $failed_sites[] = $site['name'];
+                }
+            }
+        }
+        
+        // キャッシュをクリア
+        wp_cache_flush();
+        
+        if ($removed_count > 0) {
+            add_action('admin_notices', function() use ($removed_count, $failed_sites) {
+                echo '<div class="notice notice-success is-dismissible">';
+                echo '<p>ゴーストサイト ' . $removed_count . ' 件を削除しました。</p>';
+                if (!empty($failed_sites)) {
+                    echo '<p>削除に失敗したサイト: ' . implode(', ', $failed_sites) . '</p>';
+                }
+                echo '</div>';
+            });
+        } else {
+            add_action('admin_notices', function() {
+                echo '<div class="notice notice-info is-dismissible"><p>削除対象のゴーストサイトは見つかりませんでした。</p></div>';
+            });
+        }
     }
 }
 
@@ -415,6 +503,55 @@ $sites = get_option('wp_cross_post_sites', array());
         
         <?php submit_button('設定を保存'); ?>
     </form>
+
+    <!-- メンテナンス機能 -->
+    <div class="wp-cross-post-card">
+        <h2>🔧 メンテナンス機能</h2>
+        <p class="description">キャッシュのクリアや不正なサイトデータの削除を行えます。</p>
+        
+        <!-- 強制キャッシュクリア -->
+        <div class="maintenance-section">
+            <h3>強制キャッシュクリア</h3>
+            <p class="description">プラグインの全キャッシュ（WordPress オブジェクトキャッシュ、トランジェント、プラグイン固有キャッシュ）をクリアします。データが正しく表示されない場合に実行してください。</p>
+            <form method="post" action="" style="display: inline;">
+                <?php wp_nonce_field('wp_cross_post_force_cache_clear', 'wp_cross_post_force_cache_clear_nonce'); ?>
+                <button type="submit" class="button button-secondary" onclick="return confirm('全キャッシュをクリアしますか？この操作は元に戻せません。');">
+                    🗑️ 全キャッシュをクリア
+                </button>
+            </form>
+        </div>
+
+        <hr style="margin: 20px 0;">
+
+        <!-- ゴーストサイト削除 -->
+        <div class="maintenance-section">
+            <h3>ゴーストサイト強制削除</h3>
+            <p class="description">接続できないサイト（ゴーストサイト）を自動検出して削除します。古いサイトデータが残っている場合に実行してください。</p>
+            <p class="description" style="color: #d63384;"><strong>⚠️ 注意:</strong> この操作は接続テストに失敗したサイトを全て削除します。一時的にサイトがダウンしている場合も削除される可能性があります。</p>
+            <form method="post" action="" style="display: inline;">
+                <?php wp_nonce_field('wp_cross_post_remove_ghost_sites', 'wp_cross_post_remove_ghost_sites_nonce'); ?>
+                <button type="submit" class="button button-danger" onclick="return confirm('接続できないサイトを全て削除しますか？この操作は元に戻せません。\\n\\n※一時的にダウンしているサイトも削除される可能性があります。');" style="background-color: #dc3545; border-color: #dc3545; color: white;">
+                    ⚠️ ゴーストサイトを削除
+                </button>
+            </form>
+        </div>
+
+        <hr style="margin: 20px 0;">
+
+        <!-- 統計情報 -->
+        <div class="maintenance-section">
+            <h3>統計情報</h3>
+            <?php
+            global $wpdb;
+            $sites_table = $wpdb->prefix . 'cross_post_sites';
+            $total_sites = $wpdb->get_var("SELECT COUNT(*) FROM $sites_table");
+            $active_sites = $wpdb->get_var("SELECT COUNT(*) FROM $sites_table WHERE status = 'active'");
+            ?>
+            <p><strong>登録サイト数:</strong> <?php echo esc_html($total_sites); ?> サイト</p>
+            <p><strong>有効サイト数:</strong> <?php echo esc_html($active_sites); ?> サイト</p>
+            <p><strong>データベースバージョン:</strong> <?php echo esc_html(get_option('wp_cross_post_db_version', '未設定')); ?></p>
+        </div>
+    </div>
 </div>
 
 <style>
@@ -473,5 +610,43 @@ $sites = get_option('wp_cross_post_sites', array());
 
 .card-content h3 {
     margin-top: 0;
+}
+
+.maintenance-section {
+    margin-bottom: 20px;
+    padding: 15px;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    background-color: #fafafa;
+}
+
+.maintenance-section h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #333;
+}
+
+.maintenance-section .description {
+    margin-bottom: 15px;
+    line-height: 1.4;
+}
+
+.button-danger {
+    background-color: #dc3545 !important;
+    border-color: #dc3545 !important;
+    color: white !important;
+}
+
+.button-danger:hover {
+    background-color: #c82333 !important;
+    border-color: #bd2130 !important;
+}
+
+.maintenance-section p {
+    margin: 8px 0;
+}
+
+.maintenance-section strong {
+    color: #2c3e50;
 }
 </style>
