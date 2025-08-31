@@ -3,7 +3,7 @@
  * Plugin Name: WP Cross Post
  * Plugin URI: https://github.com/watayoshi1984/WP-Cross-Post.git
  * Description: WordPressサイト間で記事を同期するプラグイン。カテゴリーとタグの自動同期、マテリアルデザインUI、REST API v2対応。
- * Version: 1.2.1
+ * Version: 1.2.2
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: watayoshi
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 
 // 既に定数が定義されている場合は、再定義しない
 if (!defined('WP_CROSS_POST_VERSION')) {
-    define('WP_CROSS_POST_VERSION', '1.2.1');
+    define('WP_CROSS_POST_VERSION', '1.2.2');
 }
 if (!defined('WP_CROSS_POST_PLUGIN_DIR')) {
     define('WP_CROSS_POST_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -485,12 +485,25 @@ if (!class_exists('WP_Cross_Post')) {
         }
 
         public function activate() {
-            // カスタムテーブルの作成
-            WP_Cross_Post_Database_Manager::create_tables();
+            // 出力バッファリングを開始して予期しない出力を防ぐ
+            ob_start();
             
-            // 毎日午前3時にタクソノミーの自動同期をスケジュール
-            if (!wp_next_scheduled('wp_cross_post_daily_sync')) {
-                wp_schedule_event(strtotime('tomorrow 03:00'), 'daily', 'wp_cross_post_daily_sync');
+            try {
+                // カスタムテーブルの作成
+                WP_Cross_Post_Database_Manager::create_tables();
+                
+                // 毎日午前3時にタクソノミーの自動同期をスケジュール
+                if (!wp_next_scheduled('wp_cross_post_daily_sync')) {
+                    wp_schedule_event(strtotime('tomorrow 03:00'), 'daily', 'wp_cross_post_daily_sync');
+                }
+            } catch (Exception $e) {
+                // エラーログを出力（デバッグモードの場合のみ）
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log('WP Cross Post activation error: ' . $e->getMessage());
+                }
+            } finally {
+                // 出力バッファの内容を破棄
+                ob_end_clean();
             }
         }
 

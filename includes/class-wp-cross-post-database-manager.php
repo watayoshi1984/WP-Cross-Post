@@ -5,7 +5,7 @@
  */
 
 class WP_Cross_Post_Database_Manager {
-    const DB_VERSION = '1.0.0';
+    const DB_VERSION = '1.0.1';
     const DB_VERSION_OPTION = 'wp_cross_post_db_version';
     
     /**
@@ -57,8 +57,7 @@ class WP_Cross_Post_Database_Manager {
             KEY idx_local_term (local_term_id),
             KEY idx_remote_term (remote_term_id),
             KEY idx_sync_status (sync_status),
-            KEY idx_local_slug (local_term_slug),
-            CONSTRAINT fk_taxonomy_site_id FOREIGN KEY (site_id) REFERENCES $sites_table(id) ON DELETE CASCADE
+            KEY idx_local_slug (local_term_slug)
         ) $charset_collate;";
         
         // メディア同期履歴テーブル
@@ -83,8 +82,7 @@ class WP_Cross_Post_Database_Manager {
             KEY idx_site_id (site_id),
             KEY idx_local_media (local_media_id),
             KEY idx_sync_status (sync_status),
-            KEY idx_remote_media (remote_media_id),
-            CONSTRAINT fk_media_site_id FOREIGN KEY (site_id) REFERENCES $sites_table(id) ON DELETE CASCADE
+            KEY idx_remote_media (remote_media_id)
         ) $charset_collate;";
         
         // 投稿同期履歴テーブル
@@ -111,24 +109,94 @@ class WP_Cross_Post_Database_Manager {
             KEY idx_remote_post (remote_post_id),
             KEY idx_sync_status (sync_status),
             KEY idx_sync_type (sync_type),
-            KEY idx_scheduled_date (scheduled_date),
-            CONSTRAINT fk_posts_site_id FOREIGN KEY (site_id) REFERENCES $sites_table(id) ON DELETE CASCADE
+            KEY idx_scheduled_date (scheduled_date)
         ) $charset_collate;";
         
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         
+        // まずテーブル構造を作成（外部キー制約なし）
         dbDelta($sites_sql);
         dbDelta($taxonomy_sql);
         dbDelta($media_sql);
         dbDelta($posts_sql);
         
+        // 外部キー制約を追加（テーブル作成後）
+        self::add_foreign_key_constraints();
+        
         // バージョン情報を保存
         update_option(self::DB_VERSION_OPTION, self::DB_VERSION);
         
-        // 初期化後のログ
-        error_log('WP Cross Post: Custom tables created successfully');
+        // 初期化後のログ（WP_DEBUGが有効な場合のみ）
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('WP Cross Post: Custom tables created successfully');
+        }
         
         return true;
+    }
+    
+    /**
+     * 外部キー制約の追加
+     */
+    private static function add_foreign_key_constraints() {
+        global $wpdb;
+        
+        $sites_table = $wpdb->prefix . 'cross_post_sites';
+        $taxonomy_table = $wpdb->prefix . 'cross_post_taxonomy_mapping';
+        $media_table = $wpdb->prefix . 'cross_post_media_sync';
+        $posts_table = $wpdb->prefix . 'cross_post_sync_history';
+        
+        // 外部キー制約を追加する前に、既存の制約を確認
+        $foreign_keys = array(
+            array(
+                'table' => $taxonomy_table,
+                'constraint' => 'fk_taxonomy_site_id',
+                'column' => 'site_id',
+                'reference' => $sites_table . '(id)'
+            ),
+            array(
+                'table' => $media_table,
+                'constraint' => 'fk_media_site_id',
+                'column' => 'site_id',
+                'reference' => $sites_table . '(id)'
+            ),
+            array(
+                'table' => $posts_table,
+                'constraint' => 'fk_posts_site_id',
+                'column' => 'site_id',
+                'reference' => $sites_table . '(id)'
+            )
+        );
+        
+        foreach ($foreign_keys as $fk) {
+            // 制約が既に存在するかチェック
+            $constraint_exists = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS 
+                     WHERE CONSTRAINT_SCHEMA = %s 
+                     AND TABLE_NAME = %s 
+                     AND CONSTRAINT_NAME = %s 
+                     AND CONSTRAINT_TYPE = 'FOREIGN KEY'",
+                    DB_NAME,
+                    $fk['table'],
+                    $fk['constraint']
+                )
+            );
+            
+            if (!$constraint_exists) {
+                $sql = sprintf(
+                    "ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s ON DELETE CASCADE",
+                    $fk['table'],
+                    $fk['constraint'],
+                    $fk['column'],
+                    $fk['reference']
+                );
+                
+                $result = $wpdb->query($sql);
+                if ($result === false && defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log("WP Cross Post: Failed to add foreign key constraint {$fk['constraint']}: " . $wpdb->last_error);
+                }
+            }
+        }
     }
     
     /**
