@@ -16,6 +16,8 @@ A plugin for synchronizing articles between WordPress sites. Automatic synchroni
 - **NEW** Detailed statistics and metrics
 - **NEW** Scheduled post support
 - **NEW** Enhanced security with encryption
+- **NEW** Site-specific post settings meta box
+- **NEW** Subsite post control (individual settings for publish/draft/scheduled posts)
 
 ## Requirements
 
@@ -49,9 +51,14 @@ A plugin for synchronizing articles between WordPress sites. Automatic synchroni
 
 ### Article Synchronization
 
-1. Select the destination site in the article editing screen
-2. Click the "Manual Synchronization" button
-3. Confirm synchronization status
+1. Check the "Cross Post Settings" meta box in the article editing screen
+2. Select destination sites
+3. Configure site-specific post settings
+   - Post status (publish/draft/scheduled)
+   - Category and tag selection
+   - Post date and time for scheduled posts
+4. Click the "Manual Synchronization" button
+5. Confirm synchronization status
 
 ## Performance Improvements
 
@@ -65,6 +72,21 @@ A plugin for synchronizing articles between WordPress sites. Automatic synchroni
 | **Sync Visibility** | Incomplete | Real-time tracking | **Complete visibility** |
 
 ## Changelog
+
+### 1.2.6 - 2025-08-31
+- 🎯 **Complete Meta Box Functionality Implementation**
+  - Added site-specific settings meta box to post editing screen
+  - Site-specific post status settings (publish/draft/scheduled)
+  - Subsite category and tag selection functionality
+  - Individual scheduled post date and time settings
+- 🛡️ **Enhanced Subsite Post Control**
+  - Completely resolved "automatic publication on subsites" issue
+  - Integrated management with WP_Cross_Post_Metabox_Manager class
+  - Meta box settings persistence and security enhancement (nonce verification)
+- 🔧 **Improved Custom Table Management**
+  - Forced creation functionality for wp_cross_post_site_taxonomies table
+  - Automatic table existence check during plugin initialization
+  - Complete independent management of subsite taxonomy data
 
 ### 1.2.0 - 2025-01-20
 - 🚀 **Major Database Structure Improvements**
