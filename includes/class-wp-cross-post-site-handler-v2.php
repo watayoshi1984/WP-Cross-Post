@@ -66,7 +66,7 @@ class WP_Cross_Post_Site_Handler_V2 implements WP_Cross_Post_Site_Handler_Interf
         // データのバリデーション
         if (!$this->validate_site_data($site_data)) {
             $error = new WP_Error('invalid_site_data', 'サイトデータが不正です。');
-            $this->error_manager->handle_error($error, 'add_site');
+            $this->error_manager->handle_general_error($error->get_error_message(), 'invalid_site_data');
             return $error;
         }
         
@@ -80,7 +80,7 @@ class WP_Cross_Post_Site_Handler_V2 implements WP_Cross_Post_Site_Handler_Interf
             $this->debug_manager->log('接続テストが失敗しました', 'error', array(
                 'error' => $test_result->get_error_message()
             ));
-            $this->error_manager->handle_error($test_result, 'add_site');
+            $this->error_manager->handle_general_error($test_result->get_error_message(), 'connection_test_failed');
             return $test_result;
         }
         
@@ -105,7 +105,7 @@ class WP_Cross_Post_Site_Handler_V2 implements WP_Cross_Post_Site_Handler_Interf
         
         if ($result === false) {
             $error = new WP_Error('database_error', 'サイトの追加に失敗しました: ' . $wpdb->last_error);
-            $this->error_manager->handle_error($error, 'add_site');
+            $this->error_manager->handle_general_error($error->get_error_message(), 'database_error');
             return $error;
         }
         
@@ -142,13 +142,13 @@ class WP_Cross_Post_Site_Handler_V2 implements WP_Cross_Post_Site_Handler_Interf
         
         if ($result === false) {
             $error = new WP_Error('database_error', 'サイトの削除に失敗しました: ' . $wpdb->last_error);
-            $this->error_manager->handle_error($error, 'remove_site');
+            $this->error_manager->handle_general_error($error->get_error_message(), 'database_error');
             return $error;
         }
         
         if ($result === 0) {
             $error = new WP_Error('site_not_found', '指定されたサイトが見つかりませんでした。');
-            $this->error_manager->handle_error($error, 'remove_site');
+            $this->error_manager->handle_general_error($error->get_error_message(), 'site_not_found');
             return $error;
         }
         
@@ -188,7 +188,7 @@ class WP_Cross_Post_Site_Handler_V2 implements WP_Cross_Post_Site_Handler_Interf
         
         if ($sites === null) {
             $error = new WP_Error('database_error', 'サイト取得に失敗しました: ' . $wpdb->last_error);
-            $this->error_manager->handle_error($error, 'get_sites');
+            $this->error_manager->handle_general_error($error->get_error_message(), 'database_error');
             return array();
         }
         

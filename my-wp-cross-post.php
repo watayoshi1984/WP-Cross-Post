@@ -3,7 +3,7 @@
  * Plugin Name: WP Cross Post
  * Plugin URI: https://github.com/watayoshi1984/WP-Cross-Post.git
  * Description: WordPressサイト間で記事を同期するプラグイン。カテゴリーとタグの自動同期、マテリアルデザインUI、REST API v2対応。
- * Version: 1.2.2
+ * Version: 1.2.3
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * Author: watayoshi
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 
 // 既に定数が定義されている場合は、再定義しない
 if (!defined('WP_CROSS_POST_VERSION')) {
-    define('WP_CROSS_POST_VERSION', '1.2.2');
+    define('WP_CROSS_POST_VERSION', '1.2.3');
 }
 if (!defined('WP_CROSS_POST_PLUGIN_DIR')) {
     define('WP_CROSS_POST_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -492,6 +492,9 @@ if (!class_exists('WP_Cross_Post')) {
                 // カスタムテーブルの作成
                 WP_Cross_Post_Database_Manager::create_tables();
                 
+                // 全キャッシュをクリア（古いデータの再読み込み防止）
+                $this->clear_all_caches();
+                
                 // 毎日午前3時にタクソノミーの自動同期をスケジュール
                 if (!wp_next_scheduled('wp_cross_post_daily_sync')) {
                     wp_schedule_event(strtotime('tomorrow 03:00'), 'daily', 'wp_cross_post_daily_sync');
@@ -511,6 +514,35 @@ if (!class_exists('WP_Cross_Post')) {
             // スケジュールされたイベントを削除
             wp_clear_scheduled_hook('wp_cross_post_daily_sync');
             wp_clear_scheduled_hook('wp_cross_post_process_async_sync');
+        }
+
+        /**
+         * 全キャッシュをクリア
+         */
+        private function clear_all_caches() {
+            // WordPressオブジェクトキャッシュをクリア
+            wp_cache_flush();
+            
+            // WP Cross Post関連のキャッシュキーをクリア
+            $cache_keys = array(
+                'wp_cross_post_all_sites',
+                'wp_cross_post_settings',
+                'wp_cross_post_taxonomy_mapping'
+            );
+            
+            foreach ($cache_keys as $key) {
+                wp_cache_delete($key);
+            }
+            
+            // トランジェントキャッシュもクリア
+            delete_transient('wp_cross_post_site_list');
+            delete_transient('wp_cross_post_taxonomy_cache');
+            delete_transient('wp_cross_post_media_cache');
+            
+            // デバッグログ
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('WP Cross Post: All caches cleared during activation');
+            }
         }
     }
 
