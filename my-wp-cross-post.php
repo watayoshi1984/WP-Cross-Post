@@ -70,6 +70,7 @@ if (!class_exists('WP_Cross_Post')) {
         private $sync_engine;
         private $media_sync_manager;
         private $sync_history_manager;
+        private $metabox_manager;
 
         public function __construct() {
             // マネージャークラスのインスタンス化
@@ -84,6 +85,7 @@ if (!class_exists('WP_Cross_Post')) {
             // 新しいマネージャークラスのインスタンス化
             $this->media_sync_manager = new WP_Cross_Post_Media_Sync_Manager($this->debug_manager, $this->error_manager);
             $this->sync_history_manager = new WP_Cross_Post_Sync_History_Manager($this->debug_manager, $this->error_manager);
+            $this->metabox_manager = new WP_Cross_Post_Metabox_Manager($this->debug_manager);
             
             // 依存関係の設定
             $this->error_manager->set_dependencies($this->debug_manager);
@@ -131,6 +133,9 @@ if (!class_exists('WP_Cross_Post')) {
             $this->sync_engine = new WP_Cross_Post_Sync_Engine($this->auth_manager, $this->image_manager, $this->error_manager, $this->debug_manager, $this->site_handler, $this->api_handler, $this->post_data_preparer, $this->rate_limit_manager, $this->media_sync_manager, $this->sync_history_manager);
             $this->sync_handler = new WP_Cross_Post_Sync_Handler($this->api_handler, $this->debug_manager, $this->site_handler, $this->auth_manager, $this->image_manager, $this->post_data_preparer, $this->error_manager, $this->rate_limit_manager);
             $this->error_handler = new WP_Cross_Post_Error_Handler();
+            
+            // メタボックスマネージャーに依存関係を設定
+            $this->metabox_manager->set_dependencies($this->debug_manager, $this->site_handler);
 
             if ($this->debug_manager->is_debug_mode()) {
                 add_action('init', array($this, 'start_performance_monitoring'));
@@ -139,8 +144,6 @@ if (!class_exists('WP_Cross_Post')) {
             add_action('init', array($this, 'register_post_types'));
             add_action('admin_menu', array($this, 'add_admin_menu'));
             add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
-            add_action('add_meta_boxes', array($this, 'add_post_meta_box'));
-            add_action('save_post', array($this, 'save_post_meta'));
 
             // AJAXアクションの登録
             add_action('wp_ajax_wp_cross_post_sync', array($this->sync_handler, 'ajax_sync_post'));

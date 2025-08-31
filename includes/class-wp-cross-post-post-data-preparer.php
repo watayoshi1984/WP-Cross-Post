@@ -68,7 +68,101 @@ class WP_Cross_Post_Post_Data_Preparer implements WP_Cross_Post_Post_Data_Prepar
     }
 
     /**
-     * 投稿データの準備
+     * サイト別設定を考慮した投稿データの準備
+     *
+     * @param WP_Post $post 投稿オブジェクト
+     * @param string $site_id 対象サイトID
+     * @param array $site_settings サイト別設定
+     * @return array|WP_Error 準備された投稿データ、失敗時はエラー
+     */
+    public function prepare_post_data_for_site($post, $site_id, $site_settings = array()) {
+        try {
+            $site_data = $this->get_site_data($site_id);
+
+            // 基本的な投稿データの準備
+            $post_data = array(
+                'id' => $post->ID,
+                'title' => $post->post_title,
+                'content' => $this->block_content_processor->prepare_block_content($post->post_content, $site_data),
+                'excerpt' => $post->post_excerpt,
+                'slug' => $post->post_name,
+                'comment_status' => $post->comment_status,
+                'ping_status' => $post->ping_status,
+                'post_format' => get_post_format($post->ID) ?: 'standard',
+                'meta' => $this->prepare_meta_data($post->ID)
+            );
+
+            // サイト別設定から投稿ステータスを設定
+            if (!empty($site_settings['status'])) {
+                $post_data['status'] = $site_settings['status'];
+                
+                // 予約投稿の場合は日時も設定
+                if ($site_settings['status'] === 'future' && !empty($site_settings['date'])) {
+                    $scheduled_date = date('Y-m-d H:i:s', strtotime($site_settings['date']));
+                    $post_data['date'] = $scheduled_date;
+                    $post_data['date_gmt'] = get_gmt_from_date($scheduled_date);
+                } else {
+                    // その他の場合はメインサイトの日時を使用
+                    $post_data['date'] = $post->post_date;
+                    $post_data['date_gmt'] = $post->post_date_gmt;
+                }
+            } else {
+                // サイト別設定がない場合はメインサイトの設定を使用
+                $post_data['status'] = $post->post_status;
+                $post_data['date'] = $post->post_date;
+                $post_data['date_gmt'] = $post->post_date_gmt;
+            }
+
+            // カテゴリー情報の取得（サイト設定で指定されたものを使用）
+            $categories = array();
+            if (isset($site_settings['category']) && !empty($site_settings['category'])) {
+                $categories[] = intval($site_settings['category']);
+                $this->debug_manager->log('サイト設定からカテゴリーを取得: ' . $site_settings['category'], 'debug', array(
+                    'post_id' => $post->ID,
+                    'site_id' => $site_id,
+                    'selected_category' => $site_settings['category']
+                ));
+            }
+            $post_data['categories'] = $categories;
+
+            // タグ情報の取得（サイト設定で指定されたものを使用）
+            $tags = array();
+            if (isset($site_settings['tags']) && is_array($site_settings['tags'])) {
+                foreach ($site_settings['tags'] as $tag_id) {
+                    $tags[] = intval($tag_id);
+                }
+                $this->debug_manager->log('サイト設定からタグを取得', 'debug', array(
+                    'post_id' => $post->ID,
+                    'site_id' => $site_id,
+                    'selected_tags' => $site_settings['tags']
+                ));
+            }
+            $post_data['tags'] = $tags;
+
+            // アイキャッチ画像の処理
+            $thumbnail_id = get_post_thumbnail_id($post->ID);
+            if ($thumbnail_id) {
+                $post_data['featured_media'] = $thumbnail_id;
+                $this->debug_manager->log('Thumbnail ID in prepare_post_data: ' . $thumbnail_id, 'info');
+            }
+
+            $this->debug_manager->log('投稿データの準備を開始', 'debug', $post_data);
+            $this->debug_manager->log('投稿データの準備が完了', 'debug', $post_data);
+
+            return $post_data;
+
+        } catch (Exception $e) {
+            $this->debug_manager->log('投稿データ準備エラー: ' . $e->getMessage(), 'error', array(
+                'post_id' => $post->ID,
+                'site_id' => $site_id,
+                'exception' => $e->getTraceAsString()
+            ));
+            return new WP_Error('post_data_prepare_error', '投稿データの準備に失敗しました: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * 投稿データの準備（従来版、後方互換性のため保持）
      *
      * @param WP_Post $post 投稿オブジェクト
      * @param array $selected_sites 選択されたサイト

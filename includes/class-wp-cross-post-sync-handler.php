@@ -286,16 +286,27 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
             return $this->error_manager->handle_general_error('無効な投稿IDです。', 'invalid_post');
         }
 
-        // 投稿データの準備
-        $post_data = $this->prepare_post_data($post, $selected_sites);
-
-        if (is_wp_error($post_data)) {
-            $this->debug_manager->log('投稿データの準備に失敗', 'error', array(
-                'post_id' => $post_id,
-                'error' => $post_data->get_error_message()
-            ));
-            return $post_data;
+        // メタボックス設定を取得
+        $meta_selected_sites = get_post_meta($post_id, '_wp_cross_post_selected_sites', true);
+        $site_settings = get_post_meta($post_id, '_wp_cross_post_site_settings', true);
+        
+        if (!is_array($meta_selected_sites)) {
+            $meta_selected_sites = array();
         }
+        if (!is_array($site_settings)) {
+            $site_settings = array();
+        }
+
+        // メタボックスで選択されたサイトがある場合はそれを使用、なければパラメータを使用
+        if (!empty($meta_selected_sites)) {
+            $selected_sites = $meta_selected_sites;
+        }
+
+        $this->debug_manager->log('メタボックス設定を取得', 'debug', array(
+            'post_id' => $post_id,
+            'selected_sites' => $selected_sites,
+            'site_settings' => $site_settings
+        ));
 
         $results = array();
         foreach($selected_sites as $site_id) {
@@ -324,7 +335,23 @@ class WP_Cross_Post_Sync_Handler implements WP_Cross_Post_Sync_Handler_Interface
                 continue;
             }
 
-            // UI でのサイト別設定を適用（REST準拠: リモートIDのみ）
+            // サイト別設定を取得
+            $current_site_settings = isset($site_settings[$site_id]) ? $site_settings[$site_id] : array();
+            
+            // 投稿データを準備（サイト別設定を考慮）
+            $post_data = $this->post_data_preparer->prepare_post_data_for_site($post, $site_id, $current_site_settings);
+            
+            if (is_wp_error($post_data)) {
+                $this->debug_manager->log('投稿データの準備に失敗', 'error', array(
+                    'post_id' => $post_id,
+                    'site_id' => $site_id,
+                    'error' => $post_data->get_error_message()
+                ));
+                $results[$site_id] = $post_data;
+                continue;
+            }
+
+            // 従来のサイト別設定も適用（後方互換性のため）
             if (is_array($per_site_settings) && isset($per_site_settings[$site_id])) {
                 $ps = $per_site_settings[$site_id];
                 // status/date
