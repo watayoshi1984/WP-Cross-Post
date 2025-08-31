@@ -100,6 +100,15 @@ class WP_Cross_Post_Image_Manager implements WP_Cross_Post_Image_Manager_Interfa
     }
 
     /**
+     * リトライ待機時間の設定
+     *
+     * @param int $retry_wait_time リトライ待機時間（秒）
+     */
+    public function set_retry_wait_time($retry_wait_time) {
+        $this->base_retry_wait_time = $retry_wait_time;
+    }
+
+    /**
      * 基本リトライ待機時間の設定
      *
      * @param int $base_retry_wait_time 基本リトライ待機時間（秒）
