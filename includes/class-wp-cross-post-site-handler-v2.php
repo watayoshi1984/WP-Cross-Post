@@ -422,14 +422,35 @@ class WP_Cross_Post_Site_Handler_V2 implements WP_Cross_Post_Site_Handler_Interf
             return new WP_Error('site_not_found', 'サイトが見つかりません');
         }
         
-        $taxonomies = array('category', 'post_tag');
-        $results = array();
+        $this->debug_manager->log('サイトタクソノミー同期を開始', 'info', array(
+            'site_id' => $site_id,
+            'site_url' => $site_data['url']
+        ));
         
-        foreach ($taxonomies as $taxonomy) {
-            $results[$taxonomy] = $this->sync_taxonomy_for_site($site_id, $taxonomy);
+        // カテゴリーを取得
+        $categories = $this->fetch_remote_taxonomies($site_data, 'category');
+        if (is_wp_error($categories)) {
+            $this->debug_manager->log('カテゴリー取得に失敗: ' . $categories->get_error_message(), 'error');
+            return $categories;
         }
         
-        return $results;
+        // タグを取得
+        $tags = $this->fetch_remote_taxonomies($site_data, 'post_tag');
+        if (is_wp_error($tags)) {
+            $this->debug_manager->log('タグ取得に失敗: ' . $tags->get_error_message(), 'error');
+            return $tags;
+        }
+        
+        // カスタムテーブルに保存
+        $this->save_site_taxonomies_to_database($site_id, $categories, $tags);
+        
+        $this->debug_manager->log('タクソノミー同期を完了', 'info', array(
+            'site_url' => $site_data['url'],
+            'category_count' => count($categories),
+            'tag_count' => count($tags)
+        ));
+        
+        return true;
     }
 
     /**
@@ -742,34 +763,121 @@ class WP_Cross_Post_Site_Handler_V2 implements WP_Cross_Post_Site_Handler_Interf
             ));
         }
 
-        $taxonomies = array();
+        // カスタムテーブルからサイトのタクソノミーデータを取得
+        $taxonomies = $this->get_site_taxonomies_from_database($site_id);
         
-        // カテゴリーのマッピングを取得
-        $categories = $this->get_taxonomy_mapping($site_id, 'category');
-        $taxonomies['categories'] = array();
-        foreach ($categories as $category) {
-            $taxonomies['categories'][] = array(
-                'id' => $category['remote_term_id'] ?: $category['local_term_id'],
-                'name' => $category['remote_term_name'] ?: $category['local_term_name'],
-                'local_id' => $category['local_term_id'],
-                'remote_id' => $category['remote_term_id'],
-                'sync_status' => $category['sync_status']
-            );
-        }
-
-        // タグのマッピングを取得
-        $tags = $this->get_taxonomy_mapping($site_id, 'post_tag');
-        $taxonomies['tags'] = array();
-        foreach ($tags as $tag) {
-            $taxonomies['tags'][] = array(
-                'id' => $tag['remote_term_id'] ?: $tag['local_term_id'],
-                'name' => $tag['remote_term_name'] ?: $tag['local_term_name'],
-                'local_id' => $tag['local_term_id'],
-                'remote_id' => $tag['remote_term_id'],
-                'sync_status' => $tag['sync_status']
-            );
+        if (empty($taxonomies['categories']) && empty($taxonomies['tags'])) {
+            wp_send_json_error(array(
+                'message' => 'サイトのカテゴリー・タグデータが見つかりません。先にタクソノミーの同期を実行してください。',
+                'type' => 'info'
+            ));
         }
 
         wp_send_json_success($taxonomies);
+    }
+
+    /**
+     * サブサイトのタクソノミーデータをカスタムテーブルに保存
+     */
+    private function save_site_taxonomies_to_database($site_id, $categories, $tags) {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'cross_post_site_taxonomies';
+        
+        // 既存のデータを削除
+        $wpdb->delete($table_name, array('site_id' => $site_id), array('%d'));
+        
+        // カテゴリーを保存
+        if (!empty($categories)) {
+            foreach ($categories as $category) {
+                $wpdb->insert(
+                    $table_name,
+                    array(
+                        'site_id' => $site_id,
+                        'taxonomy_type' => 'category',
+                        'term_id' => $category['id'],
+                        'term_name' => $category['name'],
+                        'term_slug' => $category['slug'],
+                        'term_description' => isset($category['description']) ? $category['description'] : '',
+                        'parent_term_id' => isset($category['parent']) && $category['parent'] > 0 ? $category['parent'] : null,
+                        'term_count' => isset($category['count']) ? $category['count'] : 0,
+                        'term_data' => json_encode($category),
+                        'last_synced' => current_time('mysql')
+                    ),
+                    array('%d', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%s', '%s')
+                );
+            }
+        }
+        
+        // タグを保存
+        if (!empty($tags)) {
+            foreach ($tags as $tag) {
+                $wpdb->insert(
+                    $table_name,
+                    array(
+                        'site_id' => $site_id,
+                        'taxonomy_type' => 'post_tag',
+                        'term_id' => $tag['id'],
+                        'term_name' => $tag['name'],
+                        'term_slug' => $tag['slug'],
+                        'term_description' => isset($tag['description']) ? $tag['description'] : '',
+                        'parent_term_id' => null,
+                        'term_count' => isset($tag['count']) ? $tag['count'] : 0,
+                        'term_data' => json_encode($tag),
+                        'last_synced' => current_time('mysql')
+                    ),
+                    array('%d', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%s', '%s')
+                );
+            }
+        }
+        
+        $this->debug_manager->log('サイトタクソノミーをカスタムテーブルに保存', 'info', array(
+            'site_id' => $site_id,
+            'categories_count' => count($categories),
+            'tags_count' => count($tags)
+        ));
+    }
+
+    /**
+     * カスタムテーブルからサイトのタクソノミーデータを取得
+     */
+    public function get_site_taxonomies_from_database($site_id) {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'cross_post_site_taxonomies';
+        
+        $results = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM $table_name WHERE site_id = %d ORDER BY taxonomy_type, term_name",
+                $site_id
+            ),
+            ARRAY_A
+        );
+        
+        $taxonomies = array(
+            'categories' => array(),
+            'tags' => array()
+        );
+        
+        foreach ($results as $row) {
+            $term_data = array(
+                'id' => $row['term_id'],
+                'name' => $row['term_name'],
+                'slug' => $row['term_slug'],
+                'description' => $row['term_description'],
+                'count' => $row['term_count']
+            );
+            
+            if ($row['taxonomy_type'] === 'category') {
+                if ($row['parent_term_id']) {
+                    $term_data['parent'] = $row['parent_term_id'];
+                }
+                $taxonomies['categories'][] = $term_data;
+            } else {
+                $taxonomies['tags'][] = $term_data;
+            }
+        }
+        
+        return $taxonomies;
     }
 }
