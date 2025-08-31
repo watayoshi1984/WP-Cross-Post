@@ -204,7 +204,16 @@ if ($_POST && isset($_POST['wp_cross_post_remove_ghost_sites_nonce'])) {
 $settings = WP_Cross_Post_Config_Manager::get_settings();
 $error_manager = WP_Cross_Post_Error_Manager::get_instance();
 $notification_settings = $error_manager->get_notification_settings();
-$sites = get_option('wp_cross_post_sites', array());
+
+// 新しいSite_Handler_V2からサイトデータを取得
+global $wp_cross_post;
+$sites = $wp_cross_post->site_handler->get_sites();
+
+// 古いwp_optionsからのサイトデータがある場合は統合表示
+$legacy_sites = get_option('wp_cross_post_sites', array());
+if (!empty($legacy_sites)) {
+    $sites = array_merge($sites, $legacy_sites);
+}
 ?>
 
 <div class="wrap wp-cross-post-container">

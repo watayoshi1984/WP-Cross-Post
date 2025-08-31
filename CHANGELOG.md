@@ -1,5 +1,20 @@
 ## 更新履歴
 
+### 1.2.5 - 2025-01-20
+- 🐛 **データ整合性の緊急修正**
+  - 統計情報とサイトリスト表示の不整合を解決
+  - admin/settings.phpで新しいSite_Handler_V2を使用するように修正
+  - 古いwp_optionsデータとの統合表示を実装
+- 🔐 **認証エラーの完全解決**
+  - Sync_Engineでapp_password取得エラーを修正
+  - 同期処理でget_site_data($site_id, true)を使用して認証情報を含むデータを取得
+  - 並列・シリアル両方の同期処理で認証データ取得を修正
+  - 「Undefined array key "app_password"」警告を解消
+- 🚀 **投稿同期の安定化**
+  - 401認証エラー「このユーザーとして投稿を編集する権限がありません」を解決
+  - Auth_Managerで適切なapp_passwordアクセスを確保
+  - Site_Handler_V2の認証データ取得機能を最適化
+
 ### 1.2.4 - 2025-01-20
 - 🐛 **設定画面の緊急修正**
   - admin/settings.phpで古いSite_Handler参照を修正

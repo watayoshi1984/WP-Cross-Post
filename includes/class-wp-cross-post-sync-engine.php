@@ -254,6 +254,15 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
                 continue;
             }
             
+            // 認証情報を含む完全なサイトデータを取得
+            $site = $this->site_handler->get_site_data($site['id'], true);
+            if (!$site) {
+                $this->debug_manager->log('無効なサイトID', 'error', array(
+                    'site_id' => $site['id']
+                ));
+                continue;
+            }
+            
             // 同期履歴レコードの作成
             $sync_record_id = $this->sync_history_manager->create_sync_record(
                 $site['id'], 
@@ -373,6 +382,15 @@ class WP_Cross_Post_Sync_Engine implements WP_Cross_Post_Sync_Engine_Interface {
         foreach ($sites as $site) {
             // 選択されたサイトのみ処理する
             if (!empty($selected_sites) && is_array($selected_sites) && !in_array($site['id'], $selected_sites)) {
+                continue;
+            }
+            
+            // 認証情報を含む完全なサイトデータを取得
+            $site = $this->site_handler->get_site_data($site['id'], true);
+            if (!$site) {
+                $this->debug_manager->log('無効なサイトID', 'error', array(
+                    'site_id' => $site['id']
+                ));
                 continue;
             }
             
